@@ -1,0 +1,5 @@
+{
+    "F5": "Save",
+    "CtrlUnderscore": "lua:comment.comment",
+    "Alt-/": "lua:comment.comment"
+}

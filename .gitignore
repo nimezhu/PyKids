@@ -1,0 +1,8 @@
+# micro's editor state (cursor positions, command history)
+.kit/micro/buffers/
+
+# The kid's own files; keep only the starter playground
+my_code/*
+!my_code/playground.py
+
+__pycache__/

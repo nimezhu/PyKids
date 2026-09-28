@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# PyKids launcher: pick a Python file, then edit it (left) and watch it run (right).
+#
+#   ./learn              pick a file from a list
+#   ./learn FILE         open FILE straight away
+#   ./learn new [NAME]   make a new file in my_code/
+#   ./learn --vim ...    use vim instead of micro (remembered until you quit)
+#   ./learn stop         close everything
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KIT="$ROOT/.kit"
+T=(tmux -L pykids -f "$KIT/tmux.conf")
+SESSION=pykids
+
+die() { echo "🐍 $*" >&2; exit 1; }
+
+# ------------------------------------------------------------------ helpers
+
+editor_cmd() {  # editor_cmd FILE -> shell command that edits FILE then closes the window
+    local f; f=$(printf %q "$1")
+    case "${PYKIDS_EDITOR:-micro}" in
+        vim) echo "vim -c 'set expandtab tabstop=4 shiftwidth=4 autoindent number mouse=a' $f; tmux kill-window" ;;
+        *)   echo "micro -config-dir $(printf %q "$KIT/micro") $f; tmux kill-window" ;;
+    esac
+}
+
+key_hints() {
+    case "${PYKIDS_EDITOR:-micro}" in
+        vim) echo "F1 help │ F2 open file │ i type, Esc stop │ :w save & run │ :q close " ;;
+        *)   echo "F1 help │ F2 open file │ Ctrl-S save & run │ Ctrl-Q close " ;;
+    esac
+}
+
+new_file() {  # new_file [NAME] -> prints path of the new file
+    local name="${1:-}"
+    while [[ -z "$name" ]]; do
+        read -rp "✨ Name for your new file (like: my_game): " name </dev/tty
+    done
+    name=$(echo "$name" | tr 'A-Z -' 'a-z__' | tr -cd 'a-z0-9_')
+    name="${name%.py}"
+    [[ -n "$name" ]] || die "Use letters and numbers for the name."
+    local path="my_code/$name.py"
+    mkdir -p "$ROOT/my_code"
+    if [[ ! -e "$ROOT/$path" ]]; then
+        printf '# %s\n# Made by me on %s\n\nprint("Hello from %s!")\n' \
+            "$name" "$(date +%Y-%m-%d)" "$name" > "$ROOT/$path"
+    fi
+    echo "$path"
+}
+
+pick_file() {  # prints the chosen path (relative to ROOT), or nothing
+    cd "$ROOT"
+    local new="✨ Make a NEW file"
+    local files; files=$(ls lessons/*.py my_code/*.py 2>/dev/null || true)
+    local choice
+    if command -v fzf >/dev/null; then
+        local preview='f={}; [ -f "$f" ] && { batcat --color=always --style=numbers "$f" 2>/dev/null || bat --color=always --style=numbers "$f" 2>/dev/null || cat -n "$f"; } || echo "Make a brand new file in my_code/"'
+        choice=$(printf '%s\n%s\n' "$new" "$files" | sed '/^$/d' | fzf \
+            --prompt="🐍 Open > " --header="Type to search · ↑↓ to move · Enter to open · Esc to cancel" \
+            --reverse --height=100% --preview="$preview" --preview-window=right:60% ) || true
+    else
+        local options=("$new") f  # no mapfile: macOS ships bash 3.2
+        while IFS= read -r f; do [[ -n "$f" ]] && options+=("$f"); done <<<"$files"
+        PS3="Type a number and press Enter: "
+        select choice in "${options[@]}"; do [[ -n "$choice" ]] && break; done </dev/tty
+    fi
+    [[ -z "${choice:-}" ]] && return 0
+    if [[ "$choice" == "$new" ]]; then new_file; else echo "$choice"; fi
+}
+
+open_window() {  # open_window FILE : a tmux window with editor | runner
+    local file="$1" name; name=$(basename "$file" .py)
+
+    # Already open? Just switch to it.
+    local existing
+    existing=$("${T[@]}" list-windows -t "$SESSION" -F '#{window_id} #{@file}' 2>/dev/null \
+               | awk -v f="$file" '$2 == f {print $1; exit}' || true)
+    if [[ -n "$existing" ]]; then
+        "${T[@]}" select-window -t "$existing"
+        return
+    fi
+
+    local editor_pane
+    if "${T[@]}" has-session -t "$SESSION" 2>/dev/null; then
+        editor_pane=$("${T[@]}" new-window -P -F '#{pane_id}' -t "$SESSION" -n "$name" \
+                      -c "$ROOT" "$(editor_cmd "$file")")
+    else
+        editor_pane=$("${T[@]}" new-session -d -P -F '#{pane_id}' -s "$SESSION" -n "$name" \
+                      -x "$(tput cols)" -y "$(tput lines)" -c "$ROOT" "$(editor_cmd "$file")")
+        setup_session
+    fi
+    "${T[@]}" set-option -w -t "$editor_pane" @file "$file"
+    "${T[@]}" set-option -p -t "$editor_pane" @label "CODE: $file"
+
+    local run_pane="" runner size
+    runner="python3 $(printf %q "$KIT/run.py") $(printf %q "$file")"
+    for size in "-l 45%" "-p 45"; do  # tmux >= 3.1 wants -l 45%; tmux 3.0 only knows -p
+        # shellcheck disable=SC2086
+        run_pane=$("${T[@]}" split-window -h $size -P -F '#{pane_id}' -t "$editor_pane" \
+                   -c "$ROOT" "$runner" 2>/dev/null) && break
+    done
+    [[ -n "$run_pane" ]] || die "Couldn't open the OUTPUT pane (tmux $(tmux -V))."
+    "${T[@]}" set-option -p -t "$run_pane" @label "OUTPUT  (click here to type answers)"
+    "${T[@]}" select-pane -t "$editor_pane"
+}
+
+setup_session() {
+    "${T[@]}" set-environment -g PYKIDS_EDITOR "${PYKIDS_EDITOR:-micro}"
+    "${T[@]}" set-option -g status-right "$(key_hints)"
+    local picker="$(printf %q "$ROOT/learn") --in-tmux"
+    local probe; probe=$("${T[@]}" display-popup -h 2>&1 || true)
+    local help="less -R $(printf %q "$KIT/cheatsheet.txt")"
+    if [[ "$probe" == *"unknown command"* ]]; then              # old tmux: no popups
+        "${T[@]}" bind -n F2 new-window -n open "$picker"
+        "${T[@]}" bind -n F1 new-window -n help "$help"
+    else
+        "${T[@]}" bind -n F2 display-popup -E -w 85% -h 80% "$picker"
+        "${T[@]}" bind -n F1 display-popup -E -w 75% -h 90% "$help"
+    fi
+}
+
+# ------------------------------------------------------------------ main
+
+command -v tmux >/dev/null || die "Please install tmux first:  sudo apt install tmux fzf micro"
+
+if [[ "${1:-}" == "--vim" ]]; then
+    command -v vim >/dev/null || die "vim is not installed."
+    export PYKIDS_EDITOR=vim; shift
+fi
+if [[ "${PYKIDS_EDITOR:-micro}" == micro ]] && ! command -v micro >/dev/null; then
+    die "Please install micro first:  sudo apt install micro   (or use ./learn --vim)"
+fi
+
+case "${1:-}" in
+    --in-tmux)  # F2 popup inside the cockpit
+        file=$(pick_file)
+        [[ -n "$file" ]] && open_window "$file"
+        exit 0 ;;
+    stop)
+        "${T[@]}" kill-server 2>/dev/null || true
+        echo "🐍 Bye!"; exit 0 ;;
+    new)
+        file=$(new_file "${2:-}") ;;
+    -h|--help|help)
+        sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    "")
+        file=$(pick_file) ;;
+    *)
+        [[ -f "$1" ]] || die "Can't find the file: $1"
+        file=$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$1" "$ROOT") ;;
+esac
+
+[[ -n "${file:-}" ]] || exit 0
+open_window "$file"
+
+# Attach (unless we are already looking at the cockpit).
+if [[ "${TMUX:-}" != *"/pykids,"* ]]; then
+    TMUX= exec "${T[@]}" attach -t "$SESSION"
+fi

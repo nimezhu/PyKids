@@ -1,0 +1,51 @@
+
+  🐍  PYKIDS CHEAT SHEET                              (press q to close)
+  ════════════════════════════════════════════════════════════════════
+
+  EDITOR KEYS (micro)
+    Ctrl-S  or  F5    save and run          Ctrl-Z / Ctrl-Y   undo / redo
+    Ctrl-Q            close this file       Ctrl-F            find
+    Ctrl-C / Ctrl-V   copy / paste          Ctrl-D            copy this line
+    Ctrl-/            comment on/off        Tab               finish a word
+    Tab / Shift-Tab   indent / un-indent the selected lines
+    F2                open another file     F1                this help
+
+  OUTPUT WINDOW
+    Click it to type answers.   Enter = run again.   Ctrl-C = stop.
+
+  ────────────────────────────────────────────────────────────────────
+  PYTHON QUICK REFERENCE
+
+    print("Hi", name)             show something
+    name = "Will"                 put a value in a variable
+    age = int(input("Age? "))     ask for a number
+
+    +  -  *  /    maths           **  power       %  remainder
+    ==  !=  <  >  <=  >=          compare
+
+    if x > 5:                     decide
+        print("big")
+    elif x > 2:
+        print("medium")
+    else:
+        print("small")
+
+    for i in range(10):           repeat 10 times (0 .. 9)
+    while lives > 0:              repeat while True
+    break                         jump out of a loop
+
+    pets = ["cat", "dog"]         a list
+    pets[0]   pets.append("fish")   len(pets)
+
+    def add(a, b):                make a function
+        return a + b
+
+    import random                 random.randint(1, 6)   random.choice(pets)
+    import turtle                 t = turtle.Turtle()    t.forward(100)
+
+  ────────────────────────────────────────────────────────────────────
+  REMEMBER
+    * if / for / while / def lines end with a colon  :
+    * the lines under them are pushed in 4 spaces
+    * text goes in "quotes", numbers don't
+    * Capital letters matter:  Name  and  name  are different!
