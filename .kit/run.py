@@ -135,7 +135,17 @@ def want_web_turtle():
         return True
     if sys.platform in ("darwin", "win32"):
         return False
-    return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if not os.environ.get("DISPLAY"):   # tkinter always needs X (XWayland counts)
+        return True
+    # DISPLAY can be set with nothing behind it (WSL without WSLg, a stale
+    # SSH session), so really try. Destroyed before it is ever shown.
+    try:
+        probe = subprocess.run([sys.executable, "-c", "import tkinter; tkinter.Tk().destroy()"],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=5)
+        return probe.returncode != 0
+    except subprocess.TimeoutExpired:   # e.g. an X server address that never answers
+        return True
 
 
 class TurtleServer:
@@ -238,7 +248,9 @@ class TurtleServer:
             cmd = ["termux-open-url", self.url]
         elif sys.platform == "darwin":
             cmd = ["open", self.url]
-        elif shutil.which("xdg-open") and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        elif shutil.which("explorer.exe"):  # WSL: the Windows browser
+            cmd = ["explorer.exe", self.url]
+        elif shutil.which("xdg-open") and os.environ.get("DISPLAY"):
             cmd = ["xdg-open", self.url]
         else:
             return
