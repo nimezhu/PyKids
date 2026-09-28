@@ -1,6 +1,8 @@
 # Lesson 9: Drawing with a turtle 🐢
 #
 # The turtle is a little pen that walks around a new window.
+# (No window on this computer? It draws in your web browser instead -
+#  look for the link in the OUTPUT pane.)
 #   forward(100)  walk 100 steps     left(90) / right(90)  turn
 #   color("red")  change pen colour  penup() / pendown()   lift or drop the pen
 

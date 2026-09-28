@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyKids Turtle</title>
+<style>
+  :root {
+    --bar: #005faf;        /* same blues as the tmux status bar */
+    --accent: #00d7ff;
+    --bar-text: #ffffff;
+    --hint: #5a6b7d;
+  }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #ffffff;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 16px; background: var(--bar); color: var(--bar-text);
+  }
+  header .logo { font-weight: 700; font-size: 17px; }
+  #file { opacity: .85; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; }
+  #status {
+    margin-left: auto; font-size: 14px; padding: 2px 10px; border-radius: 999px;
+    background: rgba(255, 255, 255, .15);
+  }
+  #status.run  { background: var(--accent); color: #002b4d; }
+  #status.bad  { background: #ffd54f; color: #3b2c00; }
+  #stage { position: relative; flex: 1; min-height: 0; background: #ffffff; overflow: hidden; }
+  #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #hint {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: 16px; text-align: center; color: var(--hint); font-size: 18px; line-height: 1.5;
+    pointer-events: none;
+  }
+  #hint[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">🐢 PyKids Turtle</span>
+  <span id="file"></span>
+  <span id="status">Connecting…</span>
+</header>
+<div id="stage">
+  <canvas id="ink"></canvas>
+  <canvas id="sprites"></canvas>
+  <div id="hint">Waiting for your program…</div>
+</div>
+<script>
+"use strict";
+
+const stage = document.getElementById("stage");
+const ink = document.getElementById("ink"), sprites = document.getElementById("sprites");
+const ic = ink.getContext("2d"), sc = sprites.getContext("2d");
+const fileEl = document.getElementById("file"), statusEl = document.getElementById("status");
+const hintEl = document.getElementById("hint");
+
+// Built-in turtle shapes, copied from Python's turtle module. In shape
+// coordinates the turtle faces +y.
+const circlePts = [];
+for (let i = 0; i < 20; i++) circlePts.push([10 * Math.cos(i * Math.PI / 10), 10 * Math.sin(i * Math.PI / 10)]);
+const SHAPES = {
+  arrow: [[-10, 0], [10, 0], [0, 10]],
+  turtle: [[0, 16], [-2, 14], [-1, 10], [-4, 7], [-7, 9], [-9, 8], [-6, 5], [-7, 1], [-5, -3], [-8, -6],
+           [-6, -8], [-4, -5], [0, -7], [4, -5], [6, -8], [8, -6], [5, -3], [7, 1], [6, 5], [9, 8],
+           [7, 9], [4, 7], [1, 10], [2, 14]],
+  circle: circlePts,
+  square: [[10, -10], [10, 10], [-10, 10], [-10, -10]],
+  triangle: [[10, -5.77], [0, 11.55], [-10, -5.77]],
+  classic: [[0, 0], [-5, -9], [0, -7], [5, -9]],
+  blank: [],
+};
+
+let world, view = { cw: 0, ch: 0, dpr: 1, s: 1 };
+let items, turtles, queue, qi, anim, spritesDirty, sawTurtle;
+let endCode = null;        // set when the program ends; shown once the drawing catches up
+
+function freshState() {
+  world = { w: 800, h: 600 };
+  items = [];              // everything drawn so far, in order
+  turtles = new Map();     // turtle id -> {x, y, h, pc, fc, shape, vis, size}
+  queue = []; qi = 0;      // steps from Python, waiting their turn
+  anim = null;             // the step being animated right now
+  spritesDirty = true;
+  sawTurtle = false;
+  setBg("white");
+}
+
+// ------------------------------------------------------------ view
+
+function resize() {
+  const r = stage.getBoundingClientRect();
+  view.cw = r.width; view.ch = r.height; view.dpr = window.devicePixelRatio || 1;
+  // Show the whole turtle world (800 x 600 unless setup() changed it), never zoom in.
+  view.s = Math.min(1, view.cw / world.w, view.ch / world.h);
+  for (const c of [ink, sprites]) {
+    c.width = Math.round(view.cw * view.dpr);
+    c.height = Math.round(view.ch * view.dpr);
+  }
+  redrawAll();
+  spritesDirty = true;
+}
+
+function worldTransform(ctx) {   // turtle coordinates: (0,0) in the middle, y goes up
+  const d = view.dpr, s = view.s;
+  ctx.setTransform(d * s, 0, 0, -d * s, d * view.cw / 2, d * view.ch / 2);
+}
+
+function screenTransform(ctx) {  // CSS pixels, for text and turtle shapes
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+}
+
+function toScreen(x, y) {
+  return [view.cw / 2 + x * view.s, view.ch / 2 - y * view.s];
+}
+
+function setBg(c) { stage.style.background = c; }
+
+// ------------------------------------------------------------ drawing
+
+function strokeLine(ctx, it, x1, y1, x2, y2) {
+  worldTransform(ctx);
+  ctx.strokeStyle = it.c;
+  ctx.lineWidth = Math.max(it.w, 1 / view.s);   // at least one screen pixel
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+function shapePath(ctx, t) {
+  const pts = SHAPES[t.shape] || [];
+  if (!pts.length) return false;
+  const [sw, sl] = t.size;
+  const k = Math.max(view.s, 0.7);              // keep the turtle big enough to see
+  const a = t.h * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  const [X, Y] = toScreen(t.x, t.y);
+  screenTransform(ctx);
+  ctx.beginPath();
+  pts.forEach(([px, py], i) => {
+    px *= sw; py *= sl;
+    const wx = px * s + py * c, wy = -px * c + py * s;
+    const sx = X + wx * k, sy = Y - wy * k;
+    i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy);
+  });
+  ctx.closePath();
+  return k;
+}
+
+function drawShape(ctx, t) {
+  const k = shapePath(ctx, t);
+  if (!k) return;
+  ctx.fillStyle = t.fc; ctx.fill();
+  ctx.lineWidth = (t.size[2] || 1) * k; ctx.lineJoin = "round";
+  ctx.strokeStyle = t.pc; ctx.stroke();
+}
+
+function drawItem(ctx, it) {
+  switch (it.k) {
+    case "line":
+      strokeLine(ctx, it, it.x1, it.y1, it.x2, it.y2);
+      break;
+    case "fill":
+      if (!it.pts || it.pts.length < 3) break;
+      worldTransform(ctx);
+      ctx.fillStyle = it.c;
+      ctx.beginPath();
+      it.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      ctx.closePath();
+      ctx.fill("evenodd");      // like the real turtle on Linux: a star has a hollow middle
+      break;
+    case "dot":
+      worldTransform(ctx);
+      ctx.fillStyle = it.c;
+      ctx.beginPath(); ctx.arc(it.x, it.y, it.size / 2, 0, 2 * Math.PI); ctx.fill();
+      break;
+    case "text": {
+      const [X, Y] = toScreen(it.x, it.y);
+      const [name, size, style] = it.f;
+      screenTransform(ctx);
+      ctx.fillStyle = it.c;
+      ctx.font = `${style || "normal"} ${Math.round(size * 4 / 3 * view.s)}px "${name}", sans-serif`;
+      ctx.textAlign = it.a; ctx.textBaseline = "bottom";
+      ctx.fillText(it.s, X, Y);
+      break;
+    }
+    case "stamp":
+      drawShape(ctx, it);
+      break;
+  }
+}
+
+function clearCanvas(ctx, c) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, c.width, c.height);
+}
+
+function redrawAll() {
+  clearCanvas(ic, ink);
+  for (const it of items) drawItem(ic, it);
+}
+
+function drawSprites() {
+  clearCanvas(sc, sprites);
+  for (const t of turtles.values()) if (t.vis) drawShape(sc, t);
+}
+
+// ------------------------------------------------------------ steps from Python
+
+function addItem(it) { items.push(it); drawItem(ic, it); }
+
+function apply(op) {
+  const t = turtles.get(op.t);
+  switch (op.op) {
+    case "new":
+      turtles.set(op.t, { x: op.x, y: op.y, h: op.h, pc: op.pc, fc: op.fc,
+                          shape: op.shape, vis: op.vis, size: op.size, fillItem: null });
+      if (!sawTurtle) { sawTurtle = true; hintEl.hidden = true; }
+      spritesDirty = true;
+      return;
+    case "look":
+      if (t) { Object.assign(t, { pc: op.pc, fc: op.fc, shape: op.shape, vis: op.vis, size: op.size }); spritesDirty = true; }
+      return;
+    case "home":
+      if (t) { t.x = 0; t.y = 0; t.h = 0; t.fillItem = null; spritesDirty = true; }
+      return;
+    case "move": {
+      if (!t) return;
+      const line = op.d ? { k: "line", t: op.t, x1: t.x, y1: t.y, x2: t.x, y2: t.y, c: op.c, w: op.w } : null;
+      if (line) items.push(line);
+      const dist = Math.hypot(op.x - t.x, op.y - t.y);
+      if (op.sp && dist > 0) {
+        // Same pace as the real turtle: one hop per frame.
+        const hops = 1 + Math.floor(dist / (3 * Math.pow(1.1, op.sp) * op.sp));
+        anim = { kind: "move", t, line, x0: t.x, y0: t.y, x1: op.x, y1: op.y, n: hops, i: 0 };
+      } else {
+        if (line) { line.x2 = op.x; line.y2 = op.y; drawItem(ic, line); }
+        t.x = op.x; t.y = op.y; spritesDirty = true;
+      }
+      return;
+    }
+    case "turn":
+      if (!t) return;
+      if (op.sp && op.d) {
+        anim = { kind: "turn", t, h0: t.h, d: op.d, n: 1 + Math.floor(Math.abs(op.d) / (3 * op.sp)), i: 0 };
+      } else {
+        t.h += op.d; spritesDirty = true;
+      }
+      return;
+    case "fillstart": {
+      const it = { k: "fill", t: op.t, pts: null, c: null };
+      items.push(it);
+      if (t) t.fillItem = it;
+      return;
+    }
+    case "fill": {
+      const it = t && t.fillItem;
+      if (!it) return;
+      t.fillItem = null;
+      it.pts = op.pts; it.c = op.c;
+      // The fill goes under the lines drawn since begin_fill(): paint it,
+      // then paint those lines again on top.
+      const from = items.indexOf(it);
+      if (from >= 0) for (let i = from; i < items.length; i++) drawItem(ic, items[i]);
+      return;
+    }
+    case "dot":
+      addItem({ k: "dot", t: op.t, x: op.x, y: op.y, size: op.size, c: op.c });
+      return;
+    case "write":
+      addItem({ k: "text", t: op.t, x: op.x, y: op.y, s: op.s, a: op.a, f: op.f, c: op.c });
+      return;
+    case "stamp":
+      if (t) addItem({ k: "stamp", t: op.t, x: t.x, y: t.y, h: t.h, pc: t.pc, fc: t.fc,
+                       shape: t.shape, size: t.size.slice() });
+      return;
+    case "clear":
+      items = items.filter(it => it.t !== op.t);
+      redrawAll();
+      return;
+    case "clearscreen":
+      items = []; setBg("white"); redrawAll();
+      return;
+    case "bg":
+      setBg(op.c);
+      return;
+    case "world":
+      world = { w: op.w, h: op.h };
+      resize();
+      return;
+    case "title":
+      document.title = op.s;
+      return;
+  }
+}
+
+function hop() {
+  const a = anim, t = a.t;
+  a.i++;
+  const f = a.i / a.n;
+  if (a.kind === "move") {
+    const x = a.x0 + (a.x1 - a.x0) * f, y = a.y0 + (a.y1 - a.y0) * f;
+    if (a.line) {
+      strokeLine(ic, a.line, a.line.x2, a.line.y2, x, y);
+      a.line.x2 = x; a.line.y2 = y;
+    }
+    t.x = x; t.y = y;
+  } else {
+    t.h = a.h0 + a.d * f;
+  }
+  spritesDirty = true;
+  if (a.i >= a.n) anim = null;
+}
+
+function frame() {
+  const until = performance.now() + 10;
+  for (;;) {
+    if (anim) { hop(); break; }                      // one animated hop per frame
+    if (qi >= queue.length || performance.now() > until) break;
+    apply(queue[qi++]);                               // instant steps run right away
+  }
+  if (qi > 10000 && qi * 2 > queue.length) { queue = queue.slice(qi); qi = 0; }
+  if (spritesDirty) { drawSprites(); spritesDirty = false; }
+  if (endCode !== null && qi >= queue.length && !anim) {   // program ended AND drawing caught up
+    showEnd(endCode);
+    endCode = null;
+  }
+  requestAnimationFrame(frame);
+}
+
+// ------------------------------------------------------------ talking to run.py
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || "";
+}
+
+function showEnd(code) {
+  if (code === 0) setStatus("Finished ✅");
+  else if (code === 130 || code === -2) setStatus("Stopped", "bad");
+  else setStatus("Error ❌ look at the OUTPUT pane", "bad");
+  if (!sawTurtle) hintEl.textContent = "This program didn't use the turtle.";
+}
+
+const events = new EventSource("events");
+events.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg.type === "reset") {
+    freshState(); resize();
+    document.title = "PyKids Turtle";
+    fileEl.textContent = msg.file || "";
+    hintEl.hidden = false;
+    hintEl.textContent = "Waiting for your program…";
+    endCode = null;
+    setStatus("Running…", "run");
+  } else if (msg.type === "ops") {
+    for (const op of msg.ops) queue.push(op);
+  } else if (msg.type === "end") {
+    endCode = msg.code;
+  } else if (msg.type === "full") {
+    setStatus("Too much drawing! Stopped.", "bad");
+  }
+};
+events.onerror = () => setStatus("Not connected. Is ./learn still running?", "bad");
+
+freshState();
+window.addEventListener("resize", resize);
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

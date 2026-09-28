@@ -3,18 +3,28 @@
 
     run.py FILE          watch FILE and re-run it every time it is saved
     run.py --child FILE  (internal) run FILE once, printing kid-friendly errors
+
+When a real turtle window can't open (no tkinter, or no screen: Termux,
+SSH), turtle programs draw in a web page instead; see webturtle/.
+PYKIDS_TURTLE=web or =window forces one or the other.
 """
+import json
 import os
 import runpy
 import select
+import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
 RED, GREEN, YELLOW, CYAN = "\033[31m", "\033[32m", "\033[33m", "\033[36m"
+
+WEBTURTLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webturtle")
 
 
 # ---------------------------------------------------------------- child mode
@@ -62,6 +72,12 @@ def hint_for(exc):
         return "A function kept calling itself forever. It needs a way to stop!"
     if isinstance(exc, FileNotFoundError):
         return "That file doesn't exist. Check the name and the folder."
+    if name == "NotInWebTurtle":
+        return ("The web turtle can draw, but it can't do this yet.\n"
+                "Keys, clicks and timers need a real turtle window.")
+    if name == "TurtleGraphicsError":
+        return ("The turtle didn't understand that. Check the spelling of\n"
+                "colour names (like \"red\") and shapes (like \"turtle\").")
     return f"Something went wrong ({name}). Read the red line above carefully!"
 
 
@@ -93,6 +109,8 @@ def show_error(exc, path):
 
 def child(path):
     sys.path.insert(0, os.path.dirname(os.path.abspath(path)))
+    if os.environ.get("PYKIDS_WEBTURTLE"):
+        sys.path.insert(0, WEBTURTLE)   # `import turtle` gets the web one
     sys.argv = [path]
     try:
         runpy.run_path(path, run_name="__main__")
@@ -103,6 +121,155 @@ def child(path):
     except BaseException as exc:
         show_error(exc, path)
         sys.exit(1)
+
+
+# ---------------------------------------------------------------- web turtle
+
+def want_web_turtle():
+    mode = os.environ.get("PYKIDS_TURTLE", "auto")
+    if mode in ("web", "window"):
+        return mode == "web"
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        return True
+    if sys.platform in ("darwin", "win32"):
+        return False
+    return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+class TurtleServer:
+    """A tiny web server on this machine only. Turtle programs post their
+    drawing steps to /draw; the page at / gets them live from /events."""
+
+    MAX_OPS = 200_000   # stop a forever-loop from eating all the memory
+
+    def __init__(self):
+        with open(os.path.join(WEBTURTLE, "page.html"), "rb") as f:
+            self.page = f.read()
+        self.cond = threading.Condition()
+        self.run = 0
+        self.msgs = []      # everything for the current run, so a new tab can catch up
+        self.ops = 0
+        self.full = False
+        self.clients = 0
+        self.opened = False
+
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                if self.path == "/":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(server.page)))
+                    self.end_headers()
+                    self.wfile.write(server.page)
+                elif self.path == "/events":
+                    server.stream(self)
+                else:
+                    self.send_error(404)
+
+            def do_POST(self):
+                prefix = "/draw?run="
+                if not self.path.startswith(prefix) or not self.path[len(prefix):].isdigit():
+                    self.send_error(404)
+                    return
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(server.add(int(self.path[len(prefix):]), body))
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        for port in range(8765, 8785):   # one per open file, so pick a free one
+            try:
+                self.httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+                break
+            except OSError:
+                continue
+        else:
+            raise OSError("no free port for the web turtle")
+        self.httpd.daemon_threads = True
+        self.url = f"http://127.0.0.1:{port}/"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def _post(self, msg):   # call with self.cond held
+        self.msgs.append(json.dumps(msg, separators=(",", ":")))
+        self.cond.notify_all()
+
+    def new_run(self, name):
+        with self.cond:
+            self.run += 1
+            self.msgs, self.ops, self.full = [], 0, False
+            self._post({"type": "reset", "file": name})
+            return self.run
+
+    def end_run(self, code):
+        with self.cond:
+            self._post({"type": "end", "code": code})
+
+    def add(self, run, body):
+        try:
+            ops = json.loads(body)
+            assert isinstance(ops, list)
+        except (ValueError, AssertionError):
+            return 400
+        with self.cond:
+            if run != self.run:
+                return 409          # an old run that was just replaced
+            if self.full or self.ops + len(ops) > self.MAX_OPS:
+                if not self.full:
+                    self.full = True
+                    self._post({"type": "full"})
+                return 413
+            self.ops += len(ops)
+            self._post({"type": "ops", "ops": ops})
+            first = not self.opened and self.clients == 0
+            self.opened = True
+        if first:
+            self.open_browser()
+        return 204
+
+    def open_browser(self):
+        # Only where it is sure to open a real browser, never a text one in this pane.
+        if shutil.which("termux-open-url"):
+            cmd = ["termux-open-url", self.url]
+        elif sys.platform == "darwin":
+            cmd = ["open", self.url]
+        elif shutil.which("xdg-open") and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            cmd = ["xdg-open", self.url]
+        else:
+            return
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+
+    def stream(self, handler):
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream")
+        handler.send_header("Cache-Control", "no-cache")
+        handler.end_headers()
+        with self.cond:
+            self.clients += 1
+        run, pos = None, 0
+        try:
+            while True:
+                with self.cond:
+                    if run == self.run and pos >= len(self.msgs):
+                        self.cond.wait(15)
+                    if run != self.run:
+                        run, pos = self.run, 0
+                    new = self.msgs[pos:]
+                    pos += len(new)
+                out = "".join(f"data: {m}\n\n" for m in new) if new else ": still here\n\n"
+                handler.wfile.write(out.encode())
+                handler.wfile.flush()
+        except OSError:
+            pass    # the tab was closed
+        finally:
+            with self.cond:
+                self.clients -= 1
 
 
 # ---------------------------------------------------------------- watch mode
@@ -146,6 +313,12 @@ def watch(path):
     # Ctrl-C should stop the kid's program, not this watcher.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     child_cmd = [sys.executable, "-u", os.path.abspath(__file__), "--child", os.path.abspath(path)]
+    turtle = None
+    if want_web_turtle():
+        try:
+            turtle = TurtleServer()
+        except OSError:
+            pass    # turtle programs will then say tkinter is missing
 
     while True:
         if mtime(path) is None:
@@ -156,7 +329,11 @@ def watch(path):
 
         seen = mtime(path)
         banner(path)
-        proc = subprocess.Popen(child_cmd, cwd=os.path.dirname(os.path.abspath(path)),
+        env = None
+        if turtle:
+            run = turtle.new_run(os.path.basename(path))
+            env = dict(os.environ, PYKIDS_WEBTURTLE=turtle.url, PYKIDS_WEBTURTLE_RUN=str(run))
+        proc = subprocess.Popen(child_cmd, cwd=os.path.dirname(os.path.abspath(path)), env=env,
                                 preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
 
         # Running: restart right away if the file is saved again.
@@ -172,6 +349,8 @@ def watch(path):
             continue
 
         footer(proc.returncode)
+        if turtle:
+            turtle.end_run(proc.returncode)
         drain_stdin()
 
         # Finished: wait for a save or an Enter key.

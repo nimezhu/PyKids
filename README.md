@@ -20,9 +20,23 @@ brew install tmux fzf micro python-tk pyflakes
 chmod +x learn
 ```
 
-Windows: use WSL (Ubuntu) and follow the Debian / Ubuntu steps. Turtle windows need Windows 11 (WSLg).
+Windows: use WSL (Ubuntu) and follow the Debian / Ubuntu steps.
 
 Needs tmux 3.0 or newer (popups for F1/F2 need 3.2; older versions open them in a new tab instead).
+
+## Turtle without a window
+
+When a turtle window can't open (no tkinter, or no screen, e.g. Termux on a phone or over SSH),
+turtle programs draw in a web browser instead. The OUTPUT pane shows the link
+(`http://127.0.0.1:8765`); on Termux and macOS the browser opens by itself. The page redraws
+every time you save.
+
+It can do everything drawing needs: moving and turning, colours, fills, `circle`, `dot`,
+`write`, `stamp`, shapes, `speed` and `tracer`. Keys, clicks and timers (`onkey`, `onclick`,
+`ontimer`, ...) don't work there yet, and say so.
+
+`PYKIDS_TURTLE=web ./learn` uses the web page even when a window could open;
+`PYKIDS_TURTLE=window` never uses it. Set it before the first `./learn` (or after `./learn stop`).
 
 ## Use
 
@@ -56,6 +70,7 @@ learn           launcher (fzf picker → tmux window: editor | runner)
 .kit/tmux.conf  tmux settings (on a private socket, so your own tmux isn't affected)
 .kit/micro/     micro config just for this project (your own ~/.config/micro isn't used)
                 plug/pykids: indents after a ":" and un-indents after return/break/pass
+.kit/webturtle/ turtle that draws in a web page when there's no window (served by run.py)
 .kit/cheatsheet.txt  shown by F1
 lessons/        01_hello … 10_guess_game, each ends with a 🧩 CHALLENGE
 my_code/        the kid's own files
