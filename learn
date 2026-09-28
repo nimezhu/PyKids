@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # PyKids launcher: pick a Python file, then edit it (left) and watch it run (right).
 #
-#   ./learn              pick a file from a list
+#   ./learn              start menu: continue, next lesson, open a file, or new
+#   ./learn open         pick a file from the list
 #   ./learn FILE         open FILE straight away
-#   ./learn new [NAME]   make a new file in my_code/
+#   ./learn new [NAME]   make a new file in my_code/ (NAME can have folders: games/snake)
 #   ./learn --vim ...    use vim instead of micro (remembered until you quit)
 #   ./learn stop         close everything
 set -euo pipefail
@@ -32,57 +33,137 @@ key_hints() {
     esac
 }
 
-new_file() {  # new_file [NAME] -> prints path of the new file
-    local name="${1:-}"
+new_file() {  # new_file [NAME] [FOLDER] -> prints path of the new file
+    local name="${1:-}" dir="${2:-my_code}"   # NAME may have folders: games/snake
     while [[ -z "$name" ]]; do
-        read -rp "✨ Name for your new file (like: my_game): " name </dev/tty
+        read -rp "✨ Name for your new file in $dir/ (like: my_game): " name </dev/tty
     done
-    name=$(echo "$name" | tr 'A-Z -' 'a-z__' | tr -cd 'a-z0-9_')
     name="${name%.py}"
+    name=$(echo "$name" | tr 'A-Z -' 'a-z__' | tr -cd 'a-z0-9_/' | tr -s '/')
+    name="${name#/}"; name="${name%/}"
     [[ -n "$name" ]] || die "Use letters and numbers for the name."
-    local path="my_code/$name.py"
-    mkdir -p "$ROOT/my_code"
+    local path="$dir/$name.py"
+    mkdir -p "$(dirname "$ROOT/$path")"
     if [[ ! -e "$ROOT/$path" ]]; then
         printf '# %s\n# Made by me on %s\n\nprint("Hello from %s!")\n' \
-            "$name" "$(date +%Y-%m-%d)" "$name" > "$ROOT/$path"
+            "${name##*/}" "$(date +%Y-%m-%d)" "${name##*/}" > "$ROOT/$path"
     fi
     echo "$path"
 }
 
+tree_lines() {  # tree_lines DIR PAD : "path<TAB>label" lines, a folder's files before its folders
+    local dir="$1" pad="$2" f
+    [[ -d "$ROOT/$dir" ]] || return 0
+    printf '%s/\t%s📁 %s/\n' "$dir" "$pad" "${dir##*/}"
+    for f in "$ROOT/$dir"/*.py; do
+        [[ -f "$f" ]] && printf '%s/%s\t%s   %s\n' "$dir" "${f##*/}" "$pad" "${f##*/}"
+    done
+    for f in "$ROOT/$dir"/*/; do
+        f="${f%/}"; f="${f##*/}"
+        [[ -d "$ROOT/$dir/$f" && "$f" != __pycache__ ]] && tree_lines "$dir/$f" "$pad   "
+    done
+    return 0
+}
+
 pick_file() {  # prints the chosen path (relative to ROOT), or nothing
     cd "$ROOT"
-    local new="✨ Make a NEW file"
-    local files; files=$(ls lessons/*.py my_code/*.py 2>/dev/null || true)
-    local choice
+    local new="✨ Make a NEW file" lines choice
+    lines=$(tree_lines lessons ""; tree_lines my_code "")
     if command -v fzf >/dev/null; then
-        local preview='f={}; [ -f "$f" ] && { batcat --color=always --style=numbers "$f" 2>/dev/null || bat --color=always --style=numbers "$f" 2>/dev/null || cat -n "$f"; } || echo "Make a brand new file in my_code/"'
-        choice=$(printf '%s\n%s\n' "$new" "$files" | sed '/^$/d' | fzf \
-            --prompt="🐍 Open > " --header="Type to search · ↑↓ to move · Enter to open · Esc to cancel" \
-            --reverse --height=100% --preview="$preview" --preview-window=right:60% ) || true
+        # Each line is "path<TAB>label": fzf shows the label, we get the path back.
+        local preview='f={1}; if [ "$f" = NEW ]; then echo "Make a brand new file in my_code/"
+            elif [ -d "$f" ]; then echo "📁 $f"; echo; echo "Enter makes a new file in this folder."
+            else echo "📄 $f"; echo; batcat --color=always --style=numbers "$f" 2>/dev/null || bat --color=always --style=numbers "$f" 2>/dev/null || cat -n "$f"; fi'
+        choice=$(printf 'NEW\t%s\n%s\n' "$new" "$lines" | fzf \
+            --delimiter=$'\t' --with-nth=2 --no-sort \
+            --prompt="🐍 Open > " --header="Enter opens · Enter on 📁 = new file" \
+            --reverse --height=100% --preview="$preview" --preview-window='right,60%,<40(down,40%)' ) || true
+        choice=${choice%%$'\t'*}
     else
-        # Our own menu instead of `select`, so NEW is 0 and lesson 05 is number 5.
-        local list=() f n  # no mapfile: macOS ships bash 3.2
-        while IFS= read -r f; do [[ -n "$f" ]] && list+=("$f"); done <<<"$files"
-        {
-            printf '%3d) %s\n' 0 "$new"
-            for ((n = 0; n < ${#list[@]}; n++)); do printf '%3d) %s\n' $((n + 1)) "${list[n]}"; done
-        } >&2
+        # Our own numbered menu: NEW is 0 and lesson 05 is number 5. Folders are headings.
+        local list=() path label n=0  # no mapfile: macOS ships bash 3.2
+        printf '%4s  %s\n' "0)" "$new" >&2
+        while IFS=$'\t' read -r path label; do
+            if [[ "$path" == */ ]]; then
+                printf '%4s  %s\n' "" "$label" >&2
+            else
+                list+=("$path"); n=$((n + 1))
+                printf '%4s  %s\n' "$n)" "$label" >&2
+            fi
+        done <<<"$lines"
         while read -rp "Type a number and press Enter (just Enter to cancel): " n </dev/tty; do
             [[ -z "$n" ]] && break
             if [[ "$n" =~ ^[0-9]+$ ]]; then
                 n=$((10#$n))  # "05" -> 5, not an octal error
-                if (( n == 0 )); then choice=$new; break; fi
+                if (( n == 0 )); then choice=NEW; break; fi
                 if (( n <= ${#list[@]} )); then choice=${list[n-1]}; break; fi
             fi
             echo "Pick a number from 0 to ${#list[@]}." >&2
         done
     fi
-    [[ -z "${choice:-}" ]] && return 0
-    if [[ "$choice" == "$new" ]]; then new_file; else echo "$choice"; fi
+    case "${choice:-}" in
+        "")  ;;
+        NEW) new_file ;;
+        */)  new_file "" "${choice%/}" ;;
+        *)   echo "$choice" ;;
+    esac
+}
+
+# ------------------------------------------------------------------ start menu
+
+remember() {  # remember FILE : for "Continue" and "Next lesson" in the start menu
+    echo "$1" > "$KIT/.last_file" 2>/dev/null || true
+    [[ "$1" == lessons/* ]] && { echo "$1" > "$KIT/.last_lesson" 2>/dev/null || true; }
+    return 0
+}
+
+next_lesson() {  # the lesson after the last one opened, the first if none, nothing after the last
+    local last="" f found=""
+    [[ -f "$KIT/.last_lesson" ]] && last=$(cat "$KIT/.last_lesson")
+    for f in "$ROOT"/lessons/*.py; do
+        f="lessons/${f##*/}"
+        if [[ -z "$last" || -n "$found" ]]; then echo "$f"; return 0; fi
+        [[ "$f" == "$last" ]] && found=1
+    done
+    [[ -n "$found" ]] || echo "lessons/01_hello.py"   # the last lesson was renamed: start over
+    return 0
+}
+
+welcome() {  # the start menu; prints the chosen file (or nothing)
+    cd "$ROOT"
+    local last="" next default key
+    [[ -f "$KIT/.last_file" ]] && last=$(cat "$KIT/.last_file")
+    [[ -n "$last" && -f "$ROOT/$last" ]] || last=""
+    next=$(next_lesson)
+    default=o; [[ -n "$next" ]] && default=l; [[ -n "$last" ]] && default=c
+
+    local B=$'\033[1m' D=$'\033[2m' C=$'\033[36m' R=$'\033[0m'
+    {
+        printf '\033[2J\033[H\n  %s🐍 PyKids%s  %slet'\''s code!%s\n\n' "$B" "$R" "$D" "$R"
+        [[ -n "$last" ]] && printf '    %sc%s   ▶  Continue       %s%s%s\n' "$C$B" "$R" "$D" "$last" "$R"
+        [[ -n "$next" ]] && printf '    %sl%s   📘 Next lesson    %s%s%s\n' "$C$B" "$R" "$D" "$next" "$R"
+        [[ -z "$next" ]] && printf '        🎉 %sYou opened every lesson!%s\n' "$D" "$R"
+        printf '    %so%s   📂 Open a file…\n' "$C$B" "$R"
+        printf '    %sn%s   ✨ New program\n' "$C$B" "$R"
+        printf '    %sq%s   👋 Quit\n\n' "$C$B" "$R"
+        printf '  Press a letter %s(Enter = %s)%s ' "$D" "$default" "$R"
+    } >&2
+    while IFS= read -rsn1 key </dev/tty; do
+        [[ -z "$key" ]] && key=$default
+        case "$key" in
+            c) [[ -n "$last" ]] || continue; echo >&2; echo "$last"; return 0 ;;
+            l) [[ -n "$next" ]] || continue; echo >&2; echo "$next"; return 0 ;;
+            o) printf '\033[2J\033[H' >&2; pick_file; return 0 ;;
+            n) printf '\033[2J\033[H' >&2; new_file; return 0 ;;
+            q|$'\e') echo >&2; return 0 ;;
+        esac
+    done
+    return 0
 }
 
 open_window() {  # open_window FILE : a tmux window with editor | runner
     local file="$1" name; name=$(basename "$file" .py)
+    remember "$file"
 
     # Already open? Just switch to it.
     local existing
@@ -174,6 +255,8 @@ case "${1:-}" in
     -h|--help|help)
         sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     "")
+        file=$(welcome) ;;
+    open)
         file=$(pick_file) ;;
     *)
         [[ -f "$1" ]] || die "Can't find the file: $1"

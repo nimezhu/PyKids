@@ -6,3 +6,6 @@ my_code/*
 !my_code/playground.py
 
 __pycache__/
+
+# start menu memory (last file / last lesson opened)
+.kit/.last_*

@@ -58,14 +58,21 @@ If you downloaded a zip instead of using `git clone`, run `chmod +x learn` once.
 
 | Command | What it does |
 |---|---|
-| `./learn` | Pick a file from a list and open it |
+| `./learn` | Start menu (see below) |
+| `./learn open` | Go straight to the file list |
 | `./learn lessons/05_if.py` | Open this file directly |
-| `./learn new my_game` | Create `my_code/my_game.py` and open it |
+| `./learn new my_game` | Create `my_code/my_game.py` and open it (`new games/snake` makes a folder too) |
 | `./learn --vim` | Use vim instead of micro (lasts until you quit) |
 | `./learn stop` | Close everything |
 
-Without fzf the list is numbered: **0** makes a new file, and **1–11** are the lessons, so typing
-`5` opens `lessons/05_if.py`.
+The **start menu** needs one key: **c** continues the file you had open last time, **l** opens the
+next lesson, **o** opens the file list, **n** makes a new program, and **q** quits. Enter picks the
+first choice.
+
+The **file list** (also on **F2**) shows `lessons/` and `my_code/` as a tree, including folders
+inside `my_code/` like `games/` or `art/`. Type to search. Enter opens a file; Enter on a 📁 folder
+makes a new file in it. Without fzf the list is numbered: **0** makes a new file, and **1–11** are
+the lessons, so typing `5` opens `lessons/05_if.py`.
 
 ## Keys inside the cockpit
 
@@ -113,7 +120,7 @@ PYKIDS_TURTLE=window ./learn   # always a real window
 ## Layout
 
 ```
-learn           launcher (fzf picker → tmux window: editor | runner)
+learn           launcher (start menu → file tree → tmux window: editor | runner)
 .kit/run.py     watches the file, reruns it on save, shows errors with a plain-English hint
 .kit/tmux.conf  tmux settings (on a private socket, so your own tmux isn't affected)
 .kit/micro/     micro config just for this project (your own ~/.config/micro isn't used)
