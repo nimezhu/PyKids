@@ -3,11 +3,15 @@
 PyKids uses it when a real turtle window can't open (no tkinter, or no
 screen: Termux, SSH). run.py serves the page; this module works out
 where every turtle goes, like the real one does, and sends the drawing
-steps there.
+steps there. Key presses come back from the page the other way.
 
-Only drawing is supported. Keys, clicks and timers raise NotInWebTurtle.
+Drawing, keys and timers work. Clicks and pop-up questions raise
+NotInWebTurtle.
 """
 import atexit
+import collections
+import heapq
+import itertools
 import json
 import math
 import os
@@ -200,14 +204,63 @@ _REAL_TURTLE_ONLY = {
     "tiltangle", "undo", "undobufferentries",
 }
 _REAL_SCREEN_ONLY = {
-    "addshape", "bgpic", "getcanvas", "listen", "numinput", "onclick", "onkey",
-    "onkeypress", "onkeyrelease", "onscreenclick", "ontimer", "register_shape",
-    "setworldcoordinates", "textinput",
+    "addshape", "bgpic", "getcanvas", "numinput", "onclick", "onscreenclick",
+    "register_shape", "setworldcoordinates", "textinput",
 }
 
 
 def _not_here(name):
     return NotInWebTurtle(f"{name}() doesn't work in the web turtle yet.")
+
+
+# ---------------------------------------------------------------- keys and timers
+# Like the real turtle, key handlers and timers run in the main thread:
+# inside mainloop()/done(), update(), and while a turtle walks.
+
+_keys_in = collections.deque()          # ("press" | "release", keyname) from the page
+_keys_cond = threading.Condition()
+_timers = []                            # heap of (when, n, function)
+_timer_n = itertools.count()
+_busy = False                           # already running a handler?
+
+
+def _read_keys():
+    try:
+        with _sender.opener.open(f"{_URL}keys?run={_RUN}") as stream:
+            for line in stream:
+                ev = json.loads(line)
+                with _keys_cond:
+                    _keys_in.append((ev["t"], ev["k"]))
+                    _keys_cond.notify()
+    except (OSError, ValueError, KeyError):
+        pass    # the run was replaced, or the program is ending
+
+
+def _events_waiting():
+    return bool(_keys_in) or bool(_timers and _timers[0][0] <= time.monotonic())
+
+
+def _run_events():
+    """Run handlers for keys that came in and timers that are due."""
+    global _busy
+    if _busy:           # a handler moved a turtle; don't start another inside it
+        return False
+    _busy = True
+    ran = False
+    try:
+        while _keys_in:
+            kind, key = _keys_in.popleft()
+            ran = Screen()._key_event(kind, key) or ran
+        now = time.monotonic()
+        due = []
+        while _timers and _timers[0][0] <= now:
+            due.append(heapq.heappop(_timers)[2])
+        for fun in due:     # timers set by these run next time, not in this loop
+            fun()
+            ran = True
+    finally:
+        _busy = False
+    return ran
 
 
 # ---------------------------------------------------------------- Screen
@@ -219,6 +272,10 @@ class _Screen:
         self._size = (800, 600)
         self._instant = False
         self._turtles = []
+        self._on_press = {}     # keyname (None = any key) -> function
+        self._on_release = {}
+        self._listening = False
+        self._stop = False
 
     def __getattr__(self, name):
         if name in _REAL_SCREEN_ONLY:
@@ -270,6 +327,7 @@ class _Screen:
         self._instant = not n
 
     def update(self):
+        _run_events()
         _sender.flush()
 
     def delay(self, delay=None):
@@ -300,14 +358,72 @@ class _Screen:
 
     resetscreen = reset
 
+    # ---- keys and timers
+
+    def _bind(self, handlers, fun, key):
+        if fun is None:
+            handlers.pop(key, None)
+        elif not callable(fun):
+            raise TurtleGraphicsError(
+                f"onkey needs a function name without (): onkey(jump, {key!r}), not onkey(jump(), ...)")
+        else:
+            handlers[key] = fun
+        keys = sorted({k for k in (*self._on_press, *self._on_release) if k is not None})
+        any_key = None in self._on_press
+        _send({"op": "keys", "keys": keys, "any": any_key})
+
+    def onkeyrelease(self, fun, key):
+        self._bind(self._on_release, fun, key)
+
+    onkey = onkeyrelease    # same as the real turtle: onkey fires when the key comes up
+
+    def onkeypress(self, fun, key=None):
+        self._bind(self._on_press, fun, key)
+
+    def listen(self, xdummy=None, ydummy=None):
+        if not self._listening:
+            self._listening = True
+            _send({"op": "listen"})
+            _sender.flush()
+            threading.Thread(target=_read_keys, daemon=True).start()
+
+    def _key_event(self, kind, key):
+        handlers = self._on_press if kind == "press" else self._on_release
+        fun = handlers.get(key) or (handlers.get(None) if kind == "press" else None)
+        if fun:
+            fun()
+        return bool(fun)
+
+    def ontimer(self, fun, t=0):
+        if not callable(fun):
+            raise TurtleGraphicsError(
+                f"ontimer needs a function name without (): ontimer(move, {t}), not ontimer(move(), {t})")
+        heapq.heappush(_timers, (time.monotonic() + t / 1000, next(_timer_n), fun))
+
     def mainloop(self):
-        # The real turtle waits here until you close the window. The web
-        # page stays open by itself, so the program can just finish.
+        # The real turtle waits here until you close the window. With nothing
+        # to wait for (no keys, no timers) the web page keeps the drawing, so
+        # the program can just finish.
+        _sender.flush()
+        if not (_timers or self._on_press or self._on_release):
+            return
+        print("🐢 Playing! Keys go to the web page. Press Ctrl-C here to stop.", flush=True)
+        while not self._stop:
+            if _run_events():
+                _sender.flush()             # show what the handlers drew right away
+            if not (_timers or self._on_press or self._on_release):
+                break                       # the last timer finished
+            wait = min(0.5, max(0.0, _timers[0][0] - time.monotonic())) if _timers else 0.5
+            with _keys_cond:
+                if not _keys_in:
+                    _keys_cond.wait(wait)
         _sender.flush()
 
     done = mainloop
     exitonclick = mainloop
-    bye = mainloop
+
+    def bye(self):
+        self._stop = True
 
 
 _screen = None
@@ -384,6 +500,8 @@ class Turtle:
         self._x, self._y = x, y
         if self._fill is not None:
             self._fill.append([_r(x), _r(y)])
+        if not self.screen._instant and _events_waiting():
+            _run_events()   # like the real turtle: keys work while it walks
 
     def _turn(self, degrees, instant=False):
         self._h = (self._h + degrees) % 360
@@ -698,7 +816,7 @@ for _name in """forward fd back bk backward left lt right rt goto setpos setposi
 
 for _name in """bgcolor colormode setup screensize window_width window_height title
         tracer update delay mode getshapes turtles clearscreen resetscreen mainloop
-        done exitonclick bye""".split():
+        done exitonclick bye onkey onkeypress onkeyrelease listen ontimer""".split():
     globals()[_name] = _screen_function(_name)
 
 del _name

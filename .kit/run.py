@@ -73,11 +73,12 @@ def hint_for(exc):
     if isinstance(exc, FileNotFoundError):
         return "That file doesn't exist. Check the name and the folder."
     if name == "NotInWebTurtle":
-        return ("The web turtle can draw, but it can't do this yet.\n"
-                "Keys, clicks and timers need a real turtle window.")
+        return ("The web turtle can draw and use keys and timers, but it\n"
+                "can't do this yet. Clicks and pop-up questions need a real\n"
+                "turtle window.")
     if name == "TurtleGraphicsError":
-        return ("The turtle didn't understand that. Check the spelling of\n"
-                "colour names (like \"red\") and shapes (like \"turtle\").")
+        return ("The turtle didn't understand that - the red line says what.\n"
+                "Often it's the spelling of a colour (\"red\") or shape (\"turtle\").")
     return f"Something went wrong ({name}). Read the red line above carefully!"
 
 
@@ -149,8 +150,13 @@ def want_web_turtle():
 
 
 class TurtleServer:
-    """A tiny web server on this machine only. Turtle programs post their
-    drawing steps to /draw; the page at / gets them live from /events."""
+    """A tiny web server on this machine only.
+
+    program -> page:  the program posts drawing steps to /draw; the page
+                      gets them live from /events.
+    page -> program:  the page posts key presses to /key; the program
+                      reads them live from /keys.
+    """
 
     MAX_OPS = 200_000   # stop a forever-loop from eating all the memory
 
@@ -160,6 +166,7 @@ class TurtleServer:
         self.cond = threading.Condition()
         self.run = 0
         self.msgs = []      # everything for the current run, so a new tab can catch up
+        self.keys = []      # key presses for the current run
         self.ops = 0
         self.full = False
         self.clients = 0
@@ -171,25 +178,36 @@ class TurtleServer:
             def log_message(self, *args):
                 pass
 
+            def route(self):    # "/draw?run=3" -> ("/draw", 3)
+                path, _, query = self.path.partition("?")
+                run = query[4:] if query.startswith("run=") else ""
+                return path, int(run) if run.isdigit() else None
+
             def do_GET(self):
-                if self.path == "/":
+                path, run = self.route()
+                if path == "/":
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(server.page)))
                     self.end_headers()
                     self.wfile.write(server.page)
-                elif self.path == "/events":
+                elif path == "/events":
                     server.stream(self)
+                elif path == "/keys" and run is not None:
+                    server.stream_keys(self, run)
                 else:
                     self.send_error(404)
 
             def do_POST(self):
-                prefix = "/draw?run="
-                if not self.path.startswith(prefix) or not self.path[len(prefix):].isdigit():
-                    self.send_error(404)
-                    return
+                path, run = self.route()
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-                self.send_response(server.add(int(self.path[len(prefix):]), body))
+                if path == "/draw" and run is not None:
+                    code = server.add(run, body)
+                elif path == "/key" and run is not None:
+                    code = server.add_key(run, body)
+                else:
+                    code = 404
+                self.send_response(code)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
@@ -212,8 +230,8 @@ class TurtleServer:
     def new_run(self, name):
         with self.cond:
             self.run += 1
-            self.msgs, self.ops, self.full = [], 0, False
-            self._post({"type": "reset", "file": name})
+            self.msgs, self.keys, self.ops, self.full = [], [], 0, False
+            self._post({"type": "reset", "file": name, "run": self.run})
             return self.run
 
     def end_run(self, code):
@@ -241,6 +259,44 @@ class TurtleServer:
         if first:
             self.open_browser()
         return 204
+
+    def add_key(self, run, body):
+        try:
+            ev = json.loads(body)
+            ev = {"t": ev["t"], "k": str(ev["k"])}
+            assert ev["t"] in ("press", "release")
+        except (ValueError, KeyError, TypeError, AssertionError):
+            return 400
+        with self.cond:
+            if run != self.run:
+                return 409
+            self.keys.append(json.dumps(ev))
+            self.cond.notify_all()
+        return 204
+
+    def stream_keys(self, handler, run):
+        """The running program reads key presses here, one JSON per line."""
+        with self.cond:
+            if run != self.run:
+                handler.send_error(409)
+                return
+            pos = len(self.keys)    # only keys pressed from now on
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/x-ndjson")
+        handler.end_headers()
+        try:
+            while True:
+                with self.cond:
+                    while run == self.run and pos >= len(self.keys):
+                        self.cond.wait()
+                    if run != self.run:
+                        return      # the program was replaced
+                    new = self.keys[pos:]
+                    pos += len(new)
+                handler.wfile.write("".join(k + "\n" for k in new).encode())
+                handler.wfile.flush()
+        except OSError:
+            pass
 
     def open_browser(self):
         # Only where it is sure to open a real browser, never a text one in this pane.

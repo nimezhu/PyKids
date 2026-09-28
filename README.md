@@ -94,8 +94,13 @@ doesn't change: it's still `import turtle`.
   finished or had an error.
 
 It can do everything drawing needs: moving and turning, colours, fills, `circle`, `dot`, `write`,
-`stamp`, shapes, `speed` and `tracer`. Keys, clicks and timers (`onkey`, `onclick`, `ontimer`, ...)
-don't work there yet, and say so if you use them.
+`stamp`, shapes, `speed` and `tracer`.
+
+Games work too: timers (`ontimer`) and keys (`onkey`, `onkeypress`, `onkeyrelease`, `listen`).
+Press the keys in the web page. On a phone or tablet the page shows buttons for the keys your
+program uses. If you forget `screen.listen()`, the page reminds you. `done()` keeps a game running
+until you press Ctrl-C in OUTPUT or save again. Clicks (`onclick`, `ondrag`, ...) and pop-up
+questions (`textinput`, `numinput`) don't work there yet, and say so if you use them.
 
 To choose for yourself, set `PYKIDS_TURTLE` before the first `./learn` (or after `./learn stop`):
 

@@ -37,6 +37,36 @@
     pointer-events: none;
   }
   #hint[hidden] { display: none; }
+
+  /* keys */
+  #keys { font-size: 14px; padding: 2px 10px; border-radius: 999px; background: rgba(255, 255, 255, .15); }
+  #keys.off { background: #ffd54f; color: #3b2c00; }
+  #toast {
+    position: absolute; left: 50%; top: 16px; transform: translateX(-50%);
+    max-width: calc(100% - 32px); padding: 8px 14px; border-radius: 8px;
+    background: #263238; color: #ffffff; font-size: 15px; text-align: center;
+  }
+  #pad {
+    position: absolute; left: 0; right: 0; bottom: 12px; padding: 0 16px;
+    display: flex; justify-content: space-between; align-items: flex-end; gap: 12px;
+    pointer-events: none;
+  }
+  #pad button {
+    pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    min-width: 60px; height: 60px; padding: 0 12px; border-radius: 14px;
+    border: 2px solid rgba(0, 43, 77, .35); background: rgba(255, 255, 255, .8);
+    color: #002b4d; font: 600 20px system-ui, sans-serif;
+  }
+  #pad button.down { background: var(--accent); }
+  .dpad {
+    display: grid; gap: 6px; grid-template-columns: repeat(3, 60px); grid-template-rows: repeat(3, 60px);
+    grid-template-areas: ". Up ." "Left . Right" ". Down .";
+  }
+  .dpad .Up { grid-area: Up; } .dpad .Down { grid-area: Down; }
+  .dpad .Left { grid-area: Left; } .dpad .Right { grid-area: Right; }
+  .others { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 50%; margin-left: auto; }
+  #keys[hidden], #toast[hidden], #pad[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -44,11 +74,14 @@
   <span class="logo">🐢 PyKids Turtle</span>
   <span id="file"></span>
   <span id="status">Connecting…</span>
+  <span id="keys" hidden></span>
 </header>
 <div id="stage">
   <canvas id="ink"></canvas>
   <canvas id="sprites"></canvas>
   <div id="hint">Waiting for your program…</div>
+  <div id="toast" hidden></div>
+  <div id="pad" hidden></div>
 </div>
 <script>
 "use strict";
@@ -344,6 +377,103 @@ function showEnd(code) {
   if (!sawTurtle) hintEl.textContent = "This program didn't use the turtle.";
 }
 
+// ------------------------------------------------------------ keys
+
+const keysEl = document.getElementById("keys"), toastEl = document.getElementById("toast");
+const padEl = document.getElementById("pad");
+let run = 0;               // which run of the program we're showing
+let running = false;       // is the program still going?
+let wantKeys = null;       // {keys: [...], any: bool} once the program uses onkey/onkeypress
+let listening = false;     // has the program called listen()?
+const showPad = matchMedia("(pointer: coarse)").matches || /[?&]pad=1/.test(location.search);
+
+// Browser key names -> the names turtle uses (Tk keysyms).
+const KEYSYM = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
+                 " ": "space", Enter: "Return", Escape: "Escape", Backspace: "BackSpace",
+                 Tab: "Tab", Delete: "Delete", Shift: "Shift_L", Control: "Control_L", Alt: "Alt_L" };
+const LABEL = { Up: "▲", Down: "▼", Left: "◀", Right: "▶", space: "Space", Return: "Enter",
+                BackSpace: "⌫", Escape: "Esc" };
+
+let toastTimer = 0;
+function toast(text) {
+  toastEl.textContent = text; toastEl.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.hidden = true; }, 3500);
+}
+
+let sending = Promise.resolve();   // one at a time, so presses and releases stay in order
+function sendKey(k, t) {
+  if (!running || !wantKeys) return;
+  if (!listening) { toast("Keys are off. Add  screen.listen()  to your program."); return; }
+  const url = `key?run=${run}`, body = JSON.stringify({ k, t });
+  sending = sending.then(() => fetch(url, { method: "POST", body }).catch(() => {}));
+}
+
+function usingKeys() { return running && wantKeys; }
+
+window.addEventListener("keydown", (e) => {
+  if (!usingKeys() || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();                       // no page scrolling on arrows / space
+  const k = KEYSYM[e.key] || e.key;
+  if (e.repeat) sendKey(k, "release");      // holding a key repeats it, like on Linux
+  sendKey(k, "press");
+});
+window.addEventListener("keyup", (e) => {
+  if (!usingKeys() || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  sendKey(KEYSYM[e.key] || e.key, "release");
+});
+
+function padButton(k) {
+  const b = document.createElement("button");
+  b.textContent = LABEL[k] || k;
+  b.className = k;
+  let repeat = 0;
+  const up = () => {
+    clearTimeout(repeat); clearInterval(repeat);
+    if (b.classList.contains("down")) { b.classList.remove("down"); sendKey(k, "release"); }
+  };
+  b.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    b.setPointerCapture(e.pointerId);
+    b.classList.add("down");
+    sendKey(k, "press");
+    repeat = setTimeout(() => {             // held down: repeat like a keyboard does
+      repeat = setInterval(() => { sendKey(k, "release"); sendKey(k, "press"); }, 100);
+    }, 400);
+  });
+  for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) b.addEventListener(ev, up);
+  b.addEventListener("contextmenu", (e) => e.preventDefault());
+  return b;
+}
+
+function updateKeys() {
+  keysEl.hidden = !usingKeys();
+  keysEl.textContent = listening ? "⌨️ Keys on" : "⌨️ Keys off";
+  keysEl.className = listening ? "" : "off";
+
+  padEl.textContent = "";
+  padEl.hidden = !(showPad && usingKeys());
+  if (padEl.hidden) return;
+  // Buttons for the keys the program listens for (any key: arrows + space).
+  const keys = wantKeys.keys.slice();
+  if (wantKeys.any) for (const k of ["Up", "Down", "Left", "Right", "space"]) if (!keys.includes(k)) keys.push(k);
+  const arrows = ["Up", "Left", "Right", "Down"].filter(k => keys.includes(k));
+  const others = keys.filter(k => !arrows.includes(k)).slice(0, 6);
+  if (arrows.length) {
+    const d = document.createElement("div"); d.className = "dpad";
+    arrows.forEach(k => d.append(padButton(k)));
+    padEl.append(d);
+  }
+  if (others.length) {
+    const o = document.createElement("div"); o.className = "others";
+    others.forEach(k => o.append(padButton(k)));
+    padEl.append(o);
+  }
+}
+
+// ------------------------------------------------------------ messages from run.py
+
 const events = new EventSource("events");
 events.onmessage = (e) => {
   const msg = JSON.parse(e.data);
@@ -354,11 +484,27 @@ events.onmessage = (e) => {
     hintEl.hidden = false;
     hintEl.textContent = "Waiting for your program…";
     endCode = null;
+    run = msg.run; running = true; wantKeys = null; listening = false;
+    toastEl.hidden = true;
+    updateKeys();
     setStatus("Running…", "run");
   } else if (msg.type === "ops") {
-    for (const op of msg.ops) queue.push(op);
+    for (const op of msg.ops) {
+      // Key set-up takes effect straight away, not after the drawing catches up.
+      if (op.op === "keys") {
+        wantKeys = (op.keys.length || op.any) ? { keys: op.keys, any: op.any } : null;
+        updateKeys();
+      } else if (op.op === "listen") {
+        listening = true;
+        updateKeys();
+      } else {
+        queue.push(op);
+      }
+    }
   } else if (msg.type === "end") {
     endCode = msg.code;
+    running = false;
+    updateKeys();
   } else if (msg.type === "full") {
     setStatus("Too much drawing! Stopped.", "bad");
   }
