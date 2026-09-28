@@ -2,41 +2,56 @@
 
 A small Python learning setup that runs in the terminal. Your code is on the left and its output is on the right. The code runs again every time you save.
 
+## Get it
+
+```bash
+git clone https://github.com/nimezhu/PyKids.git
+cd PyKids
+```
+
 ## Setup (once)
 
-Debian / Ubuntu:
+**Debian / Ubuntu**
 
 ```bash
 sudo apt install tmux fzf micro python3-tk python3-pyflakes
-# python3-tk: only needed for turtle
-# pyflakes:   micro marks mistakes (like misspelled names) in the margin when you save
-chmod +x learn
 ```
 
-macOS (with [Homebrew](https://brew.sh)):
+**macOS** (with [Homebrew](https://brew.sh))
 
 ```bash
 brew install tmux fzf micro python-tk pyflakes
-chmod +x learn
 ```
 
-Windows: use WSL (Ubuntu) and follow the Debian / Ubuntu steps.
+**Windows**: install WSL (Ubuntu), then follow the Debian / Ubuntu steps inside it.
 
-Needs tmux 3.0 or newer (popups for F1/F2 need 3.2; older versions open them in a new tab instead).
+**Android** ([Termux](https://termux.dev))
 
-## Turtle without a window
+```bash
+pkg install tmux fzf micro python ncurses-utils
+pip install pyflakes
+```
 
-When a turtle window can't open (no tkinter, or no screen, e.g. Termux on a phone or over SSH),
-turtle programs draw in a web browser instead. The OUTPUT pane shows the link
-(`http://127.0.0.1:8765`); on Termux and macOS the browser opens by itself. The page redraws
-every time you save.
+The phone keyboard has no F-keys, so add them to Termux's extra-keys row. Put this line in
+`~/.termux/termux.properties`, then run `termux-reload-settings`:
 
-It can do everything drawing needs: moving and turning, colours, fills, `circle`, `dot`,
-`write`, `stamp`, shapes, `speed` and `tracer`. Keys, clicks and timers (`onkey`, `onclick`,
-`ontimer`, ...) don't work there yet, and say so.
+```
+extra-keys = [['ESC','CTRL','TAB','F1','F2','F5','UP','DOWN']]
+```
 
-`PYKIDS_TURTLE=web ./learn` uses the web page even when a window could open;
-`PYKIDS_TURTLE=window` never uses it. Set it before the first `./learn` (or after `./learn stop`).
+Code and output sit side by side, so turn the phone sideways.
+
+**What the packages are for**
+
+| Package | Why |
+|---|---|
+| tmux 3.0+ | the two-pane cockpit (F1/F2 popups need 3.2; older versions open a new tab instead) |
+| micro | the editor (or use vim: `./learn --vim`) |
+| fzf | the searchable file picker (without it you get a numbered menu) |
+| pyflakes | micro marks mistakes, like misspelled names, in the margin when you save |
+| python3-tk | turtle opens a real window (without it, turtle draws in the web browser) |
+
+If you downloaded a zip instead of using `git clone`, run `chmod +x learn` once.
 
 ## Use
 
@@ -47,6 +62,9 @@ It can do everything drawing needs: moving and turning, colours, fills, `circle`
 | `./learn new my_game` | Create `my_code/my_game.py` and open it |
 | `./learn --vim` | Use vim instead of micro (lasts until you quit) |
 | `./learn stop` | Close everything |
+
+Without fzf the list is numbered: **0** makes a new file, and **1–10** are the lessons, so typing
+`5` opens `lessons/05_if.py`.
 
 ## Keys inside the cockpit
 
@@ -62,6 +80,29 @@ It can do everything drawing needs: moving and turning, colours, fills, `circle`
 | **Ctrl-Q** | Close this file (closing the last one exits) |
 | Mouse | Click a pane to move into it. Click the OUTPUT pane to type answers for `input()` |
 
+## Turtle without a window
+
+When a turtle window can't open, turtle programs draw in a web browser instead. This happens on
+Termux, over SSH, on WSL without a Linux GUI, or wherever tkinter isn't installed. Your code
+doesn't change: it's still `import turtle`.
+
+- The OUTPUT pane shows the link, like `http://127.0.0.1:8765` (each open file gets its own
+  number: 8765, 8766, ...).
+- On Termux, macOS and WSL the browser opens by itself the first time something is drawn.
+- The page redraws every time you save, and the bar at the top says when the program has
+  finished or had an error.
+
+It can do everything drawing needs: moving and turning, colours, fills, `circle`, `dot`, `write`,
+`stamp`, shapes, `speed` and `tracer`. Keys, clicks and timers (`onkey`, `onclick`, `ontimer`, ...)
+don't work there yet, and say so if you use them.
+
+To choose for yourself, set `PYKIDS_TURTLE` before the first `./learn` (or after `./learn stop`):
+
+```bash
+PYKIDS_TURTLE=web ./learn      # always the web page
+PYKIDS_TURTLE=window ./learn   # always a real window
+```
+
 ## Layout
 
 ```
@@ -73,5 +114,5 @@ learn           launcher (fzf picker → tmux window: editor | runner)
 .kit/webturtle/ turtle that draws in a web page when there's no window (served by run.py)
 .kit/cheatsheet.txt  shown by F1
 lessons/        01_hello … 10_guess_game, each ends with a 🧩 CHALLENGE
-my_code/        the kid's own files
+my_code/        the kid's own files (only playground.py is kept in git)
 ```
