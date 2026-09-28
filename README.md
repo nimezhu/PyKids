@@ -14,13 +14,13 @@ cd PyKids
 **Debian / Ubuntu**
 
 ```bash
-sudo apt install tmux fzf micro python3-tk python3-pyflakes
+sudo apt install tmux micro python3-tk python3-pyflakes
 ```
 
 **macOS** (with [Homebrew](https://brew.sh))
 
 ```bash
-brew install tmux fzf micro python-tk pyflakes
+brew install tmux micro python-tk pyflakes
 ```
 
 **Windows**: install WSL (Ubuntu), then follow the Debian / Ubuntu steps inside it.
@@ -28,7 +28,7 @@ brew install tmux fzf micro python-tk pyflakes
 **Android** ([Termux](https://termux.dev))
 
 ```bash
-pkg install tmux fzf micro python ncurses-utils
+pkg install tmux micro python ncurses-utils
 pip install pyflakes
 ```
 
@@ -48,7 +48,6 @@ output below; turn the phone sideways and they switch to side by side.
 |---|---|
 | tmux 3.0+ | the two-pane cockpit (F1/F2 popups need 3.2; older versions open a new tab instead) |
 | micro | the editor (or use vim: `./learn --vim`) |
-| fzf | the searchable file picker (without it you get a numbered menu) |
 | pyflakes | micro marks mistakes, like misspelled names, in the margin when you save |
 | python3-tk | turtle opens a real window (without it, turtle draws in the web browser) |
 
@@ -69,21 +68,26 @@ The **start menu** needs one key: **c** continues the file you had open last tim
 next lesson, **o** opens the file list, **n** makes a new program, and **q** quits. Enter picks the
 first choice.
 
-The **file browser** (also on **F2**) shows one folder at a time, like a file manager. It starts in
-the folder of the file you had open last, or at the top (`lessons/` and `my_code/`).
+The **file explorer** (also on **F2**) is a full-screen file manager: the folder's files on the
+left, a preview of the chosen file (or folder) on the right, or below it on a narrow screen. It
+starts in the folder of the file you had open last, or at the top (`lessons/` and `my_code/`).
 
 | Key | What it does |
 |---|---|
+| **↑ ↓**, PgUp/PgDn, Home/End | Move |
 | **Enter** or **→** | Open the file, or go into the 📁 folder |
-| **←** (or `..`) | Back to the folder above |
-| typing | Search this folder |
-| **Esc** | Cancel |
+| **←** or Backspace (or `..`) | Back to the folder above |
+| typing a name | Jump to it (`pl` → `playground.py`) |
+| mouse / tap | Click to choose, click again (or double-click) to open; the wheel scrolls |
+| **Esc** | Close |
 
 Every folder has **✨ New file here**, and folders in `my_code/` also have **📂 New folder here**,
-so kids can keep things tidy in folders like `games/` and `art/`.
+so kids can keep things tidy in folders like `games/` and `art/`. The name is typed in the bottom
+bar, which shows what it will become (`Moon Base` → `moon_base.py`).
 
-Without fzf the browser is numbered: numbers open folders and files, **0** makes a new file,
-**f** a new folder, and **b** goes back. Inside `lessons/`, typing `5` opens `05_if.py`.
+It's `.kit/files.py`, using Python's built-in curses. If a Python has no curses, you get a
+numbered menu instead: numbers open folders and files, **0** makes a new file, **f** a new
+folder, and **b** goes back. Inside `lessons/`, typing `5` opens `05_if.py`.
 
 ## Keys inside the cockpit
 
@@ -131,7 +135,8 @@ PYKIDS_TURTLE=window ./learn   # always a real window
 ## Layout
 
 ```
-learn           launcher (start menu → file browser → tmux window: editor | runner)
+learn           launcher (start menu → file explorer → tmux window: editor | runner)
+.kit/files.py   the file explorer (full screen, keys and mouse)
 .kit/run.py     watches the file, reruns it on save, shows errors with a plain-English hint
 .kit/tmux.conf  tmux settings (on a private socket, so your own tmux isn't affected)
 .kit/micro/     micro config just for this project (your own ~/.config/micro isn't used)

@@ -56,17 +56,18 @@ new_file() {  # new_file [NAME] [FOLDER] -> prints path of the new file
 }
 
 # ------------------------------------------------------------------ file browser
-# One folder at a time, like a file manager. "" is the top: lessons/ and my_code/.
-# Each entry is "action<TAB>label": up, new, newdir, cd:FOLDER or file:PATH.
+# The explorer is .kit/files.py (full screen, keys + mouse). If this Python has no
+# curses, a numbered menu does the same job, one folder at a time.
+# Menu entries are "action<TAB>label": up, new, newdir, cd:FOLDER or file:PATH.
 
-folder_entries() {  # folder_entries DIR
+folder_entries() {  # folder_entries DIR ("" is the top: lessons/ and my_code/)
     local dir="$1" f
     if [[ -z "$dir" ]]; then
         printf 'new\t✨ New file (in my_code/)\n'
         for f in lessons my_code; do [[ -d "$ROOT/$f" ]] && printf 'cd:%s\t📁 %s/\n' "$f" "$f"; done
         return 0
     fi
-    printf 'up\t⬆️  .. back\n'
+    printf 'up\t   .. back\n'
     printf 'new\t✨ New file here\n'
     [[ "$dir" == my_code* ]] && printf 'newdir\t📂 New folder here\n'
     for f in "$ROOT/$dir"/*/; do
@@ -79,26 +80,7 @@ folder_entries() {  # folder_entries DIR
     return 0
 }
 
-choose_fzf() {  # choose_fzf DIR ENTRIES -> the chosen action ("" = cancel)
-    local dir="$1" out key line
-    local preview='a={1}; case "$a" in
-        cd:*)   d=${a#cd:}; echo "📁 $d/"; echo; ls -1p "$d" | grep -v __pycache__ ;;
-        file:*) f=${a#file:}; echo "📄 $f"; echo
-                batcat --color=always --style=numbers "$f" 2>/dev/null || bat --color=always --style=numbers "$f" 2>/dev/null || cat -n "$f" ;;
-        up)     echo "Back to the folder above" ;;
-        new)    echo "Make a brand new Python file" ;;
-        newdir) echo "Make a new folder to keep files together" ;;
-        esac'
-    # SHELL: fzf runs the preview with it, and it must understand `case` (fish doesn't)
-    out=$(printf '%s\n' "$2" | SHELL="$BASH" fzf --delimiter=$'\t' --with-nth=2 --no-sort --expect=left,right \
-        --prompt="📂 ${dir:-PyKids}/ > " --header="Enter/→ open · ← back · Esc cancel" \
-        --reverse --height=100% --preview="$preview" --preview-window='right,60%,<40(down,40%)') || true
-    key=$(printf '%s\n' "$out" | sed -n 1p)
-    line=$(printf '%s\n' "$out" | sed -n 2p)
-    if [[ "$key" == left ]]; then echo up; else echo "${line%%$'\t'*}"; fi
-}
-
-choose_numbered() {  # choose_numbered DIR ENTRIES : without fzf. Folders and files get numbers.
+choose_numbered() {  # choose_numbered DIR ENTRIES : without curses. Folders and files get numbers.
     local dir="$1" list=() action label n=0 pick   # no mapfile: macOS ships bash 3.2
     printf '\n📂 %s/\n' "${dir:-PyKids}" >&2
     while IFS=$'\t' read -r action label; do
@@ -132,29 +114,40 @@ start_folder() {  # the folder of the last file opened, or the top
     return 0
 }
 
-pick_file() {  # a small file browser; prints the chosen path (relative to ROOT), or nothing
-    cd "$ROOT"
+pick_numbered() {  # the menu version of the explorer; prints its answer like files.py does
     local dir action name
     dir=$(start_folder)
     while true; do
-        if command -v fzf >/dev/null; then
-            action=$(choose_fzf "$dir" "$(folder_entries "$dir")")
-        else
-            action=$(choose_numbered "$dir" "$(folder_entries "$dir")")
-        fi
+        action=$(choose_numbered "$dir" "$(folder_entries "$dir")")
         case "$action" in
             "")     return 0 ;;
             up)     [[ "$dir" == */* ]] && dir="${dir%/*}" || dir="" ;;
             cd:*)   dir="${action#cd:}" ;;
-            file:*) echo "${action#file:}"; return 0 ;;
-            new)    printf '\033[2J\033[H' >&2; new_file "" "${dir:-my_code}"; return 0 ;;
+            file:*) printf 'open\t%s\n' "${action#file:}"; return 0 ;;
+            new)    printf 'new\t%s\n' "${dir:-my_code}"; return 0 ;;
             newdir)
-                printf '\033[2J\033[H' >&2
                 read -rp "📂 Name for the new folder in $dir/: " name </dev/tty || return 0
                 name=$(clean_name "${name//\//_}")
                 [[ -n "$name" ]] && mkdir -p "$ROOT/$dir/$name" && dir="$dir/$name" ;;
         esac
     done
+}
+
+pick_file() {  # the file explorer; prints the chosen path (relative to ROOT), or nothing
+    cd "$ROOT"
+    local answer kind folder name
+    if python3 -c 'import curses' 2>/dev/null; then
+        # It draws on the terminal and hands its answer back on file descriptor 3.
+        answer=$(python3 "$KIT/files.py" --start "$(start_folder)" 3>&1 >/dev/tty </dev/tty) || true
+    else
+        answer=$(pick_numbered)
+    fi
+    IFS=$'\t' read -r kind folder name <<<"$answer"
+    case "$kind" in
+        open) echo "$folder" ;;
+        new)  printf '\033[2J\033[H' >&2; new_file "$name" "$folder" ;;
+    esac
+    return 0
 }
 
 # ------------------------------------------------------------------ start menu
@@ -279,7 +272,7 @@ setup_session() {
 
 # ------------------------------------------------------------------ main
 
-command -v tmux >/dev/null || die "Please install tmux first:  sudo apt install tmux fzf micro"
+command -v tmux >/dev/null || die "Please install tmux first:  sudo apt install tmux micro"
 [[ "${1:-}" == --relayout ]] && { relayout; exit 0; }   # from the client-resized hook
 
 if [[ "${1:-}" == "--vim" ]]; then
