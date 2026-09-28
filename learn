@@ -99,22 +99,35 @@ open_window() {  # open_window FILE : a tmux window with editor | runner
                       -c "$ROOT" "$(editor_cmd "$file")")
     else
         editor_pane=$("${T[@]}" new-session -d -P -F '#{pane_id}' -s "$SESSION" -n "$name" \
-                      -x "$(tput cols)" -y "$(tput lines)" -c "$ROOT" "$(editor_cmd "$file")")
+                      -x "$(tput cols 2>/dev/null || echo 80)" -y "$(tput lines 2>/dev/null || echo 24)" \
+                      -c "$ROOT" "$(editor_cmd "$file")")
         setup_session
     fi
     "${T[@]}" set-option -w -t "$editor_pane" @file "$file"
     "${T[@]}" set-option -p -t "$editor_pane" @label "CODE: $file"
 
-    local run_pane="" runner size
-    runner="python3 $(printf %q "$KIT/run.py") $(printf %q "$file")"
-    for size in "-l 45%" "-p 45"; do  # tmux >= 3.1 wants -l 45%; tmux 3.0 only knows -p
-        # shellcheck disable=SC2086
-        run_pane=$("${T[@]}" split-window -h $size -P -F '#{pane_id}' -t "$editor_pane" \
-                   -c "$ROOT" "$runner" 2>/dev/null) && break
-    done
-    [[ -n "$run_pane" ]] || die "Couldn't open the OUTPUT pane (tmux $(tmux -V))."
+    local run_pane
+    run_pane=$("${T[@]}" split-window -h -P -F '#{pane_id}' -t "$editor_pane" -c "$ROOT" \
+               "python3 $(printf %q "$KIT/run.py") $(printf %q "$file")")
     "${T[@]}" set-option -p -t "$run_pane" @label "OUTPUT  (click here to type answers)"
     "${T[@]}" select-pane -t "$editor_pane"
+    relayout
+}
+
+NARROW=80   # below this many columns, code goes on top and output below
+
+relayout() {  # size every window: side by side when wide, stacked when narrow
+    local win w h
+    "${T[@]}" list-windows -t "$SESSION" -F '#{window_id} #{window_width} #{window_height}' 2>/dev/null |
+    while read -r win w h; do
+        if (( w < NARROW )); then
+            "${T[@]}" set-option -w -t "$win" main-pane-height $(( h * 60 / 100 ))
+            "${T[@]}" select-layout -t "$win" main-horizontal
+        else
+            "${T[@]}" set-option -w -t "$win" main-pane-width $(( w * 55 / 100 ))
+            "${T[@]}" select-layout -t "$win" main-vertical
+        fi
+    done
 }
 
 setup_session() {
@@ -130,11 +143,15 @@ setup_session() {
         "${T[@]}" bind -n F2 display-popup -E -w 85% -h 80% "$picker"
         "${T[@]}" bind -n F1 display-popup -E -w 75% -h 90% "$help"
     fi
+    # Turning a phone (or resizing the terminal) switches between the two layouts.
+    "${T[@]}" set-hook -g client-resized \
+        "run-shell '$(printf %q "$ROOT/learn") --relayout >/dev/null 2>&1'" 2>/dev/null || true
 }
 
 # ------------------------------------------------------------------ main
 
 command -v tmux >/dev/null || die "Please install tmux first:  sudo apt install tmux fzf micro"
+[[ "${1:-}" == --relayout ]] && { relayout; exit 0; }   # from the client-resized hook
 
 if [[ "${1:-}" == "--vim" ]]; then
     command -v vim >/dev/null || die "vim is not installed."

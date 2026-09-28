@@ -39,7 +39,8 @@ The phone keyboard has no F-keys, so add them to Termux's extra-keys row. Put th
 extra-keys = [['ESC','CTRL','TAB','F1','F2','F5','UP','DOWN']]
 ```
 
-Code and output sit side by side, so turn the phone sideways.
+On a narrow screen (under 80 columns, like a phone held upright) the code goes on top and the
+output below; turn the phone sideways and they switch to side by side.
 
 **What the packages are for**
 
