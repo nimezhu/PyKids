@@ -33,14 +33,18 @@ key_hints() {
     esac
 }
 
+clean_name() {  # "Rocket Game.py" -> "rocket_game"; slashes (folders) are kept
+    local name="${1%.py}"
+    name=$(echo "$name" | tr 'A-Z -' 'a-z__' | tr -cd 'a-z0-9_/' | tr -s '/')
+    name="${name#/}"; echo "${name%/}"
+}
+
 new_file() {  # new_file [NAME] [FOLDER] -> prints path of the new file
     local name="${1:-}" dir="${2:-my_code}"   # NAME may have folders: games/snake
     while [[ -z "$name" ]]; do
         read -rp "✨ Name for your new file in $dir/ (like: my_game): " name </dev/tty
     done
-    name="${name%.py}"
-    name=$(echo "$name" | tr 'A-Z -' 'a-z__' | tr -cd 'a-z0-9_/' | tr -s '/')
-    name="${name#/}"; name="${name%/}"
+    name=$(clean_name "$name")
     [[ -n "$name" ]] || die "Use letters and numbers for the name."
     local path="$dir/$name.py"
     mkdir -p "$(dirname "$ROOT/$path")"
@@ -51,62 +55,106 @@ new_file() {  # new_file [NAME] [FOLDER] -> prints path of the new file
     echo "$path"
 }
 
-tree_lines() {  # tree_lines DIR PAD : "path<TAB>label" lines, a folder's files before its folders
-    local dir="$1" pad="$2" f
-    [[ -d "$ROOT/$dir" ]] || return 0
-    printf '%s/\t%s📁 %s/\n' "$dir" "$pad" "${dir##*/}"
-    for f in "$ROOT/$dir"/*.py; do
-        [[ -f "$f" ]] && printf '%s/%s\t%s   %s\n' "$dir" "${f##*/}" "$pad" "${f##*/}"
-    done
+# ------------------------------------------------------------------ file browser
+# One folder at a time, like a file manager. "" is the top: lessons/ and my_code/.
+# Each entry is "action<TAB>label": up, new, newdir, cd:FOLDER or file:PATH.
+
+folder_entries() {  # folder_entries DIR
+    local dir="$1" f
+    if [[ -z "$dir" ]]; then
+        printf 'new\t✨ New file (in my_code/)\n'
+        for f in lessons my_code; do [[ -d "$ROOT/$f" ]] && printf 'cd:%s\t📁 %s/\n' "$f" "$f"; done
+        return 0
+    fi
+    printf 'up\t⬆️  .. back\n'
+    printf 'new\t✨ New file here\n'
+    [[ "$dir" == my_code* ]] && printf 'newdir\t📂 New folder here\n'
     for f in "$ROOT/$dir"/*/; do
         f="${f%/}"; f="${f##*/}"
-        [[ -d "$ROOT/$dir/$f" && "$f" != __pycache__ ]] && tree_lines "$dir/$f" "$pad   "
+        [[ -d "$ROOT/$dir/$f" && "$f" != __pycache__ ]] && printf 'cd:%s/%s\t📁 %s/\n' "$dir" "$f" "$f"
+    done
+    for f in "$ROOT/$dir"/*.py; do
+        [[ -f "$f" ]] && printf 'file:%s/%s\t   %s\n' "$dir" "${f##*/}" "${f##*/}"
     done
     return 0
 }
 
-pick_file() {  # prints the chosen path (relative to ROOT), or nothing
+choose_fzf() {  # choose_fzf DIR ENTRIES -> the chosen action ("" = cancel)
+    local dir="$1" out key line
+    local preview='a={1}; case "$a" in
+        cd:*)   d=${a#cd:}; echo "📁 $d/"; echo; ls -1p "$d" | grep -v __pycache__ ;;
+        file:*) f=${a#file:}; echo "📄 $f"; echo
+                batcat --color=always --style=numbers "$f" 2>/dev/null || bat --color=always --style=numbers "$f" 2>/dev/null || cat -n "$f" ;;
+        up)     echo "Back to the folder above" ;;
+        new)    echo "Make a brand new Python file" ;;
+        newdir) echo "Make a new folder to keep files together" ;;
+        esac'
+    # SHELL: fzf runs the preview with it, and it must understand `case` (fish doesn't)
+    out=$(printf '%s\n' "$2" | SHELL="$BASH" fzf --delimiter=$'\t' --with-nth=2 --no-sort --expect=left,right \
+        --prompt="📂 ${dir:-PyKids}/ > " --header="Enter/→ open · ← back · Esc cancel" \
+        --reverse --height=100% --preview="$preview" --preview-window='right,60%,<40(down,40%)') || true
+    key=$(printf '%s\n' "$out" | sed -n 1p)
+    line=$(printf '%s\n' "$out" | sed -n 2p)
+    if [[ "$key" == left ]]; then echo up; else echo "${line%%$'\t'*}"; fi
+}
+
+choose_numbered() {  # choose_numbered DIR ENTRIES : without fzf. Folders and files get numbers.
+    local dir="$1" list=() action label n=0 pick   # no mapfile: macOS ships bash 3.2
+    printf '\n📂 %s/\n' "${dir:-PyKids}" >&2
+    while IFS=$'\t' read -r action label; do
+        case "$action" in
+            up)     printf '%4s  %s\n' "b)" "$label" >&2 ;;
+            new)    printf '%4s  %s\n' "0)" "$label" >&2 ;;
+            newdir) printf '%4s  %s\n' "f)" "$label" >&2 ;;
+            *)      list+=("$action"); n=$((n + 1)); printf '%4s  %s\n' "$n)" "$label" >&2 ;;
+        esac
+    done <<<"$2"
+    while read -rp "Type a number or letter, then Enter (just Enter to cancel): " pick </dev/tty; do
+        case "$pick" in
+            "") return 0 ;;
+            0)  echo new; return 0 ;;
+            b)  [[ -n "$dir" ]] && { echo up; return 0; } ;;
+            f)  [[ "$dir" == my_code* ]] && { echo newdir; return 0; } ;;
+            *)  if [[ "$pick" =~ ^[0-9]+$ ]] && (( 10#$pick >= 1 && 10#$pick <= ${#list[@]} )); then
+                    echo "${list[10#$pick - 1]}"; return 0     # "05" -> 5, not octal
+                fi ;;
+        esac
+        echo "Pick one of the numbers or letters above." >&2
+    done
+    return 0
+}
+
+start_folder() {  # the folder of the last file opened, or the top
+    local last="" dir
+    [[ -f "$KIT/.last_file" ]] && last=$(cat "$KIT/.last_file")
+    dir="${last%/*}"
+    if [[ -n "$last" && "$last" == */* && -d "$ROOT/$dir" ]]; then echo "$dir"; fi
+    return 0
+}
+
+pick_file() {  # a small file browser; prints the chosen path (relative to ROOT), or nothing
     cd "$ROOT"
-    local new="✨ Make a NEW file" lines choice
-    lines=$(tree_lines lessons ""; tree_lines my_code "")
-    if command -v fzf >/dev/null; then
-        # Each line is "path<TAB>label": fzf shows the label, we get the path back.
-        local preview='f={1}; if [ "$f" = NEW ]; then echo "Make a brand new file in my_code/"
-            elif [ -d "$f" ]; then echo "📁 $f"; echo; echo "Enter makes a new file in this folder."
-            else echo "📄 $f"; echo; batcat --color=always --style=numbers "$f" 2>/dev/null || bat --color=always --style=numbers "$f" 2>/dev/null || cat -n "$f"; fi'
-        choice=$(printf 'NEW\t%s\n%s\n' "$new" "$lines" | fzf \
-            --delimiter=$'\t' --with-nth=2 --no-sort \
-            --prompt="🐍 Open > " --header="Enter opens · Enter on 📁 = new file" \
-            --reverse --height=100% --preview="$preview" --preview-window='right,60%,<40(down,40%)' ) || true
-        choice=${choice%%$'\t'*}
-    else
-        # Our own numbered menu: NEW is 0 and lesson 05 is number 5. Folders are headings.
-        local list=() path label n=0  # no mapfile: macOS ships bash 3.2
-        printf '%4s  %s\n' "0)" "$new" >&2
-        while IFS=$'\t' read -r path label; do
-            if [[ "$path" == */ ]]; then
-                printf '%4s  %s\n' "" "$label" >&2
-            else
-                list+=("$path"); n=$((n + 1))
-                printf '%4s  %s\n' "$n)" "$label" >&2
-            fi
-        done <<<"$lines"
-        while read -rp "Type a number and press Enter (just Enter to cancel): " n </dev/tty; do
-            [[ -z "$n" ]] && break
-            if [[ "$n" =~ ^[0-9]+$ ]]; then
-                n=$((10#$n))  # "05" -> 5, not an octal error
-                if (( n == 0 )); then choice=NEW; break; fi
-                if (( n <= ${#list[@]} )); then choice=${list[n-1]}; break; fi
-            fi
-            echo "Pick a number from 0 to ${#list[@]}." >&2
-        done
-    fi
-    case "${choice:-}" in
-        "")  ;;
-        NEW) new_file ;;
-        */)  new_file "" "${choice%/}" ;;
-        *)   echo "$choice" ;;
-    esac
+    local dir action name
+    dir=$(start_folder)
+    while true; do
+        if command -v fzf >/dev/null; then
+            action=$(choose_fzf "$dir" "$(folder_entries "$dir")")
+        else
+            action=$(choose_numbered "$dir" "$(folder_entries "$dir")")
+        fi
+        case "$action" in
+            "")     return 0 ;;
+            up)     [[ "$dir" == */* ]] && dir="${dir%/*}" || dir="" ;;
+            cd:*)   dir="${action#cd:}" ;;
+            file:*) echo "${action#file:}"; return 0 ;;
+            new)    printf '\033[2J\033[H' >&2; new_file "" "${dir:-my_code}"; return 0 ;;
+            newdir)
+                printf '\033[2J\033[H' >&2
+                read -rp "📂 Name for the new folder in $dir/: " name </dev/tty || return 0
+                name=$(clean_name "${name//\//_}")
+                [[ -n "$name" ]] && mkdir -p "$ROOT/$dir/$name" && dir="$dir/$name" ;;
+        esac
+    done
 }
 
 # ------------------------------------------------------------------ start menu

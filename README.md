@@ -69,10 +69,21 @@ The **start menu** needs one key: **c** continues the file you had open last tim
 next lesson, **o** opens the file list, **n** makes a new program, and **q** quits. Enter picks the
 first choice.
 
-The **file list** (also on **F2**) shows `lessons/` and `my_code/` as a tree, including folders
-inside `my_code/` like `games/` or `art/`. Type to search. Enter opens a file; Enter on a 📁 folder
-makes a new file in it. Without fzf the list is numbered: **0** makes a new file, and **1–11** are
-the lessons, so typing `5` opens `lessons/05_if.py`.
+The **file browser** (also on **F2**) shows one folder at a time, like a file manager. It starts in
+the folder of the file you had open last, or at the top (`lessons/` and `my_code/`).
+
+| Key | What it does |
+|---|---|
+| **Enter** or **→** | Open the file, or go into the 📁 folder |
+| **←** (or `..`) | Back to the folder above |
+| typing | Search this folder |
+| **Esc** | Cancel |
+
+Every folder has **✨ New file here**, and folders in `my_code/` also have **📂 New folder here**,
+so kids can keep things tidy in folders like `games/` and `art/`.
+
+Without fzf the browser is numbered: numbers open folders and files, **0** makes a new file,
+**f** a new folder, and **b** goes back. Inside `lessons/`, typing `5` opens `05_if.py`.
 
 ## Keys inside the cockpit
 
@@ -120,7 +131,7 @@ PYKIDS_TURTLE=window ./learn   # always a real window
 ## Layout
 
 ```
-learn           launcher (start menu → file tree → tmux window: editor | runner)
+learn           launcher (start menu → file browser → tmux window: editor | runner)
 .kit/run.py     watches the file, reruns it on save, shows errors with a plain-English hint
 .kit/tmux.conf  tmux settings (on a private socket, so your own tmux isn't affected)
 .kit/micro/     micro config just for this project (your own ~/.config/micro isn't used)
