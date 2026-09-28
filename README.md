@@ -98,8 +98,9 @@ It can do everything drawing needs: moving and turning, colours, fills, `circle`
 
 Games work too: timers (`ontimer`) and keys (`onkey`, `onkeypress`, `onkeyrelease`, `listen`).
 Press the keys in the web page. On a phone or tablet the page shows buttons for the keys your
-program uses. If you forget `screen.listen()`, the page reminds you. `done()` keeps a game running
-until you press Ctrl-C in OUTPUT or save again. Clicks (`onclick`, `ondrag`, ...) and pop-up
+program uses. If you forget `screen.listen()`, the page reminds you. `done()` waits for the web page to
+open (so a game doesn't play out while the browser is still starting), then keeps the game
+running until you press Ctrl-C in OUTPUT or save again. Clicks (`onclick`, `ondrag`, ...) and pop-up
 questions (`textinput`, `numinput`) don't work there yet, and say so if you use them.
 
 To choose for yourself, set `PYKIDS_TURTLE` before the first `./learn` (or after `./learn stop`):

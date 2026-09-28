@@ -1,6 +1,6 @@
 # Lesson 11: A real game - Hungry Turtle 🐢🍓
 #
-# Steer with the ARROW KEYS and eat the red food.
+# Press SPACE to start, then steer with the ARROW KEYS and eat the red food.
 # Every bite makes you faster. Don't hit the walls!
 #
 # Two new tricks make games work:
@@ -44,6 +44,7 @@ pen.penup()
 
 score = 0
 speed = 3
+playing = False
 
 
 def show_score():
@@ -73,6 +74,16 @@ screen.onkeypress(go_up, "Up")
 screen.onkeypress(go_down, "Down")
 screen.onkeypress(go_left, "Left")
 screen.onkeypress(go_right, "Right")
+
+
+def start():
+    global playing
+    if not playing:             # only start once
+        playing = True
+        show_score()            # this also wipes the "Press SPACE" message
+        game_loop()
+
+screen.onkeypress(start, "space")
 screen.listen()                 # start listening for keys (don't forget this!)
 
 
@@ -100,13 +111,15 @@ def game_loop():
 
 show_score()
 move_food()
-game_loop()
-turtle.done()                   # keep going until you stop it (Ctrl-S plays again)
+pen.goto(0, 60)
+pen.write("Press SPACE to start", align="center", font=("Arial", 24, "bold"))
+screen.update()
+turtle.done()                   # keep going until you stop it (Ctrl-S starts over)
 
 # 🧩 CHALLENGE
 # 1. Also steer with the W A S D keys.  (Hint: the key name for W is "w")
 # 2. It gets TOO fast! Only add 1 to speed while speed is less than 10.
 # 3. Make the food jump somewhere new every 3 seconds, even if you
 #    don't eat it. Use another function with its own ontimer.
-# 4. Press space to play again after GAME OVER: set score and speed back,
-#    move the player to (0, 0), and call game_loop() again.
+# 4. Let SPACE play again after GAME OVER: at GAME OVER set playing = False,
+#    and in start() set score and speed back and move the player to (0, 0).

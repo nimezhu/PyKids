@@ -236,6 +236,24 @@ def _read_keys():
         pass    # the run was replaced, or the program is ending
 
 
+def _wait_for_page():
+    """Hold the game until the web page is open, or it plays out unseen
+    while the browser is still starting."""
+    if not _URL:
+        return
+    url = f"{_URL}watching?run={_RUN}"
+    try:
+        _sender.opener.open(url, timeout=0.5).close()
+        return                              # a page is already open
+    except OSError:
+        pass
+    print("🐢 Waiting for the web page to open... the game starts when it does.", flush=True)
+    try:
+        _sender.opener.open(url).close()
+    except OSError:
+        pass
+
+
 def _events_waiting():
     return bool(_keys_in) or bool(_timers and _timers[0][0] <= time.monotonic())
 
@@ -407,6 +425,7 @@ class _Screen:
         _sender.flush()
         if not (_timers or self._on_press or self._on_release):
             return
+        _wait_for_page()
         print("🐢 Playing! Keys go to the web page. Press Ctrl-C here to stop.", flush=True)
         while not self._stop:
             if _run_events():

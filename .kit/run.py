@@ -195,6 +195,8 @@ class TurtleServer:
                     server.stream(self)
                 elif path == "/keys" and run is not None:
                     server.stream_keys(self, run)
+                elif path == "/watching" and run is not None:
+                    server.wait_for_page(self, run)
                 else:
                     self.send_error(404)
 
@@ -220,6 +222,7 @@ class TurtleServer:
         else:
             raise OSError("no free port for the web turtle")
         self.httpd.daemon_threads = True
+        self.httpd.handle_error = lambda request, address: None   # no tracebacks in OUTPUT
         self.url = f"http://127.0.0.1:{port}/"
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
@@ -298,6 +301,18 @@ class TurtleServer:
         except OSError:
             pass
 
+    def wait_for_page(self, handler, run):
+        """Answers once a web page is open, so games don't play out unseen."""
+        with self.cond:
+            while self.clients == 0 and run == self.run:
+                self.cond.wait()
+        try:
+            handler.send_response(200)
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+        except OSError:
+            pass    # the program stopped asking
+
     def open_browser(self):
         # Only where it is sure to open a real browser, never a text one in this pane.
         if shutil.which("termux-open-url"):
@@ -320,6 +335,7 @@ class TurtleServer:
         handler.end_headers()
         with self.cond:
             self.clients += 1
+            self.cond.notify_all()      # wakes wait_for_page
         run, pos = None, 0
         try:
             while True:
