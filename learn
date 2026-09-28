@@ -60,10 +60,22 @@ pick_file() {  # prints the chosen path (relative to ROOT), or nothing
             --prompt="🐍 Open > " --header="Type to search · ↑↓ to move · Enter to open · Esc to cancel" \
             --reverse --height=100% --preview="$preview" --preview-window=right:60% ) || true
     else
-        local options=("$new") f  # no mapfile: macOS ships bash 3.2
-        while IFS= read -r f; do [[ -n "$f" ]] && options+=("$f"); done <<<"$files"
-        PS3="Type a number and press Enter: "
-        select choice in "${options[@]}"; do [[ -n "$choice" ]] && break; done </dev/tty
+        # Our own menu instead of `select`, so NEW is 0 and lesson 05 is number 5.
+        local list=() f n  # no mapfile: macOS ships bash 3.2
+        while IFS= read -r f; do [[ -n "$f" ]] && list+=("$f"); done <<<"$files"
+        {
+            printf '%3d) %s\n' 0 "$new"
+            for ((n = 0; n < ${#list[@]}; n++)); do printf '%3d) %s\n' $((n + 1)) "${list[n]}"; done
+        } >&2
+        while read -rp "Type a number and press Enter (just Enter to cancel): " n </dev/tty; do
+            [[ -z "$n" ]] && break
+            if [[ "$n" =~ ^[0-9]+$ ]]; then
+                n=$((10#$n))  # "05" -> 5, not an octal error
+                if (( n == 0 )); then choice=$new; break; fi
+                if (( n <= ${#list[@]} )); then choice=${list[n-1]}; break; fi
+            fi
+            echo "Pick a number from 0 to ${#list[@]}." >&2
+        done
     fi
     [[ -z "${choice:-}" ]] && return 0
     if [[ "$choice" == "$new" ]]; then new_file; else echo "$choice"; fi
