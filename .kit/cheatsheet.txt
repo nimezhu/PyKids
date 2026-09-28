@@ -42,6 +42,8 @@
 
     import random                 random.randint(1, 6)   random.choice(pets)
     import turtle                 t = turtle.Turtle()    t.forward(100)
+    screen = turtle.Screen()      screen.onkeypress(jump, "space")   screen.listen()
+                                  screen.ontimer(tick, 50)   run tick in 50 ms
 
   ────────────────────────────────────────────────────────────────────
   REMEMBER

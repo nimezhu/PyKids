@@ -64,7 +64,7 @@ If you downloaded a zip instead of using `git clone`, run `chmod +x learn` once.
 | `./learn --vim` | Use vim instead of micro (lasts until you quit) |
 | `./learn stop` | Close everything |
 
-Without fzf the list is numbered: **0** makes a new file, and **1–10** are the lessons, so typing
+Without fzf the list is numbered: **0** makes a new file, and **1–11** are the lessons, so typing
 `5` opens `lessons/05_if.py`.
 
 ## Keys inside the cockpit
@@ -119,6 +119,6 @@ learn           launcher (fzf picker → tmux window: editor | runner)
                 plug/pykids: indents after a ":" and un-indents after return/break/pass
 .kit/webturtle/ turtle that draws in a web page when there's no window (served by run.py)
 .kit/cheatsheet.txt  shown by F1
-lessons/        01_hello … 10_guess_game, each ends with a 🧩 CHALLENGE
+lessons/        01_hello … 11_hungry_turtle, each ends with a 🧩 CHALLENGE
 my_code/        the kid's own files (only playground.py is kept in git)
 ```
