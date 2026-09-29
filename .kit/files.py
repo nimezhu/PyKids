@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """PyKids file explorer: a small full-screen file manager for opening files.
 
-    files.py [--start FOLDER]
+    files.py [--start FOLDER] [--new]
+
+--new opens straight into "New file here" (in my_code/) with the name box
+ready; Esc there leaves you in the explorer to pick another folder.
 
 Shows lessons/ and my_code/ one folder at a time, with a preview. The
 screen is drawn on the terminal; the answer goes to file descriptor 3:
@@ -378,11 +381,14 @@ class Explorer:
 
     # ---- the loop
 
-    def run(self):
+    def run(self, new=False):
         curses.curs_set(0)
         self.scr.keypad(True)
         curses.mousemask(curses.ALL_MOUSE_EVENTS)
         curses.mouseinterval(0)     # report presses right away; a second press opens
+        if new:                     # "New program": go straight to the name box
+            self.sel = next(i for i, e in enumerate(self.items) if e.kind == "new")
+            self.activate()
         while self.answer is None:
             self.draw()
             try:
@@ -436,16 +442,17 @@ class Explorer:
 
 def main():
     args = sys.argv[1:]
-    start = ""
-    if len(args) == 2 and args[0] == "--start":
-        start = args[1].strip("/")
+    new = "--new" in args
+    start = args[args.index("--start") + 1].strip("/") if "--start" in args[:-1] else ""
     if start.split("/")[0] not in TOPS or not os.path.isdir(os.path.join(ROOT, start)):
         start = ""
+    if new and start.split("/")[0] != "my_code":    # new programs go in my_code/
+        start = "my_code" if os.path.isdir(os.path.join(ROOT, "my_code")) else ""
     os.environ.setdefault("ESCDELAY", "25")     # Esc closes right away
 
     def explore(scr):
         ex = Explorer(scr, start)
-        ex.run()
+        ex.run(new)
         return ex.answer
 
     try:

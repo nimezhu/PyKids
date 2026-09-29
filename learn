@@ -133,12 +133,15 @@ pick_numbered() {  # the menu version of the explorer; prints its answer like fi
     done
 }
 
-pick_file() {  # the file explorer; prints the chosen path (relative to ROOT), or nothing
+pick_file() {  # pick_file [new] : the file explorer; prints the chosen path, or nothing
     cd "$ROOT"
-    local answer kind folder name
+    local answer kind folder name mode="${1:-}"
     if python3 -c 'import curses' 2>/dev/null; then
         # It draws on the terminal and hands its answer back on file descriptor 3.
-        answer=$(python3 "$KIT/files.py" --start "$(start_folder)" 3>&1 >/dev/tty </dev/tty) || true
+        answer=$(python3 "$KIT/files.py" --start "$(start_folder)" ${mode:+--new} \
+                 3>&1 >/dev/tty </dev/tty) || true
+    elif [[ "$mode" == new ]]; then
+        new_file; return 0
     else
         answer=$(pick_numbered)
     fi
@@ -195,7 +198,7 @@ welcome() {  # the start menu; prints the chosen file (or nothing)
             c) [[ -n "$last" ]] || continue; echo >&2; echo "$last"; return 0 ;;
             l) [[ -n "$next" ]] || continue; echo >&2; echo "$next"; return 0 ;;
             o) printf '\033[2J\033[H' >&2; pick_file; return 0 ;;
-            n) printf '\033[2J\033[H' >&2; new_file; return 0 ;;
+            n) printf '\033[2J\033[H' >&2; pick_file new; return 0 ;;
             q|$'\e') echo >&2; return 0 ;;
         esac
     done

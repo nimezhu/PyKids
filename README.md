@@ -65,7 +65,7 @@ If you downloaded a zip instead of using `git clone`, run `chmod +x learn` once.
 | `./learn stop` | Close everything |
 
 The **start menu** needs one key: **c** continues the file you had open last time, **l** opens the
-next lesson, **o** opens the file list, **n** makes a new program, and **q** quits. Enter picks the
+next lesson, **o** opens the file list, **n** makes a new program (in the file explorer: type its name, or Esc to pick another folder first), and **q** quits. Enter picks the
 first choice.
 
 The **file explorer** (also on **F2**) is a full-screen file manager: the folder's files on the
